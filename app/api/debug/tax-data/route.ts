@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/db'
@@ -32,9 +31,9 @@ export async function GET(request: NextRequest) {
     const debugData = {
       userEmail: user.email,
       taxReturnsCount: user.taxReturns.length,
-      taxReturns: user.taxReturns.map(taxReturn => {
+      taxReturns: user.taxReturns.map((taxReturn: any) => {
         const totalItemizedDeductions = taxReturn.deductionEntries.reduce(
-          (sum, entry) => sum + parseFloat(entry.amount?.toString() || '0'), 0
+          (sum: number, entry: any) => sum + parseFloat(entry.amount?.toString() || '0'), 0
         )
         
         const adjustedGrossIncome = parseFloat(taxReturn.adjustedGrossIncome?.toString() || taxReturn.totalIncome?.toString() || '0')
@@ -51,12 +50,12 @@ export async function GET(request: NextRequest) {
           incomeEntriesCount: taxReturn.incomeEntries.length,
           deductionEntriesCount: taxReturn.deductionEntries.length,
           dependents: (taxReturn as any).dependents || [],
-          incomeEntries: taxReturn.incomeEntries.map(entry => ({
+          incomeEntries: taxReturn.incomeEntries.map((entry: any) => ({
             incomeType: entry.incomeType,
             amount: entry.amount?.toString(),
             description: entry.description
           })),
-          deductionEntries: taxReturn.deductionEntries.map(entry => ({
+          deductionEntries: taxReturn.deductionEntries.map((entry: any) => ({
             deductionType: entry.deductionType,
             amount: entry.amount?.toString(),
             description: entry.description
@@ -66,7 +65,6 @@ export async function GET(request: NextRequest) {
     }
 
     return NextResponse.json(debugData, { status: 200 })
-
   } catch (error) {
     console.error('Error getting debug tax data:', error)
     return NextResponse.json(
