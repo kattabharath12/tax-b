@@ -192,6 +192,18 @@ async function setupGoogleCredentials() {
   }
 
   try {
+    // Parse and validate the JSON
+    const credentialsJson = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
+    
+    // Validate required fields
+    if (!credentialsJson.type || !credentialsJson.project_id || !credentialsJson.private_key) {
+      throw new Error("Invalid credentials JSON structure")
+    }
+    
+    console.log("✅ Credentials JSON parsed successfully")
+    console.log("Project ID:", credentialsJson.project_id)
+    console.log("Client email:", credentialsJson.client_email)
+    
     // Create temp directory for credentials
     const credentialsDir = '/tmp/credentials'
     const credentialsPath = '/tmp/credentials/google-service-account.json'
@@ -199,19 +211,37 @@ async function setupGoogleCredentials() {
     // Create directory if it doesn't exist
     mkdirSync(credentialsDir, { recursive: true })
     
-    // Write the credentials JSON to a temporary file
-    writeFileSync(credentialsPath, process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
+    // Fix the private key format - ensure proper line breaks
+    const fixedCredentials = {
+      ...credentialsJson,
+      private_key: credentialsJson.private_key.replace(/\\n/g, '\n')
+    }
+    
+    // Write the fixed credentials JSON to a temporary file
+    writeFileSync(credentialsPath, JSON.stringify(fixedCredentials, null, 2))
     
     // Set the environment variable for Google Cloud SDK
     process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath
     
-    console.log("✅ Google Cloud credentials set up at runtime")
+    console.log("✅ Google Cloud credentials set up at runtime with fixed formatting")
+    
+    // Verify the file was written correctly
+    const { readFileSync } = await import("fs")
+    const writtenContent = readFileSync(credentialsPath, 'utf8')
+    const parsed = JSON.parse(writtenContent)
+    console.log("✅ Credentials file verified - project:", parsed.project_id)
+    
+    // Test if the private key format is correct
+    if (!parsed.private_key.includes('-----BEGIN PRIVATE KEY-----')) {
+      throw new Error("Private key format is incorrect")
+    }
+    console.log("✅ Private key format verified")
+    
   } catch (error) {
     console.error("❌ Failed to set up Google credentials:", error.message)
     throw new Error(`Failed to set up Google credentials: ${error.message}`)
   }
 }
-
 // Google Document AI processing
 async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxData> {
   console.log("processWithGoogleDocumentAI: Starting...")
