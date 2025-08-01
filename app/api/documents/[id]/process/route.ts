@@ -280,7 +280,7 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
   }
 }
 
-// Abacus AI processing (your existing logic)
+// Abacus AI processing with multiple endpoint/auth attempts
 async function processWithAbacusAI(document: any): Promise<ExtractedTaxData> {
   console.log("processWithAbacusAI: Starting...")
   
@@ -289,61 +289,100 @@ async function processWithAbacusAI(document: any): Promise<ExtractedTaxData> {
     const fileBuffer = await readFile(document.filePath)
     const base64String = fileBuffer.toString('base64')
     
+    console.log("processWithAbacusAI: File read and converted to base64")
+    
+    // Try different endpoint formats for Abacus AI
+    const endpoints = [
+      'https://cloud.abacus.ai/api/v1/chat/completions',
+      'https://api.abacus.ai/v1/chat/completions', 
+      'https://apps.abacus.ai/v1/chat/completions'
+    ]
+    
+    const headers = {
+      'Content-Type': 'application/json'
+    }
+    
+    // Try different authentication formats
+    const authHeaders = [
+      { 'Authorization': `Bearer ${process.env.ABACUSAI_API_KEY}` },
+      { 'X-API-Key': process.env.ABACUSAI_API_KEY },
+      { 'API-Key': process.env.ABACUSAI_API_KEY },
+      { 'Authorization': `Token ${process.env.ABACUSAI_API_KEY}` }
+    ]
+    
     const messages = [{
       role: "user" as const,
       content: [
         {
-          type: "file",
-          file: {
-            filename: document.filename || document.fileName,
-            file_data: `data:${document.fileType};base64,${base64String}`
-          }
-        },
-        {
           type: "text",
           text: getExtractionPrompt(document.documentType)
+        },
+        {
+          type: "image_url",
+          image_url: {
+            url: `data:${document.fileType || 'application/pdf'};base64,${base64String}`
+          }
         }
       ]
     }]
 
-    console.log("processWithAbacusAI: Calling API...")
+    const requestBody = {
+      model: 'gpt-4o-mini', // Try different model names
+      messages: messages,
+      max_tokens: 3000,
+      response_format: { type: "json_object" }
+    }
+
+    console.log("processWithAbacusAI: Trying different endpoints and auth methods...")
     
-    const response = await fetch('https://apps.abacus.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.ABACUSAI_API_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4.1-mini',
-        messages: messages,
-        stream: false,
-        max_tokens: 3000,
-        response_format: { type: "json_object" }
-      }),
-    })
+    // Try each combination
+    for (let i = 0; i < endpoints.length; i++) {
+      for (let j = 0; j < authHeaders.length; j++) {
+        try {
+          console.log(`processWithAbacusAI: Trying endpoint ${i + 1}/${endpoints.length}, auth ${j + 1}/${authHeaders.length}`)
+          
+          const response = await fetch(endpoints[i], {
+            method: 'POST',
+            headers: {
+              ...headers,
+              ...authHeaders[j]
+            },
+            body: JSON.stringify(requestBody)
+          })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Abacus AI API error: ${response.status} - ${errorText}`)
+          console.log(`processWithAbacusAI: Response status: ${response.status}`)
+          
+          if (response.ok) {
+            const result = await response.json()
+            console.log("processWithAbacusAI: Success with endpoint:", endpoints[i])
+            console.log("processWithAbacusAI: Success with auth:", Object.keys(authHeaders[j])[0])
+            
+            const content = result.choices?.[0]?.message?.content
+
+            if (!content) {
+              throw new Error('No content returned from Abacus AI API')
+            }
+
+            const parsedContent = JSON.parse(content)
+            
+            return {
+              documentType: parsedContent.documentType || document.documentType,
+              ocrText: parsedContent.ocrText || '',
+              extractedData: parsedContent.extractedData || parsedContent,
+              confidence: 0.85,
+              processingMethod: 'abacus_ai'
+            }
+          } else {
+            const errorText = await response.text()
+            console.log(`processWithAbacusAI: Failed - ${response.status}: ${errorText}`)
+          }
+        } catch (fetchError) {
+          console.log(`processWithAbacusAI: Fetch error:`, fetchError.message)
+        }
+      }
     }
-
-    const result = await response.json()
-    const content = result.choices?.[0]?.message?.content
-
-    if (!content) {
-      throw new Error('No content returned from Abacus AI API')
-    }
-
-    const parsedContent = JSON.parse(content)
     
-    return {
-      documentType: parsedContent.documentType || document.documentType,
-      ocrText: parsedContent.ocrText || '',
-      extractedData: parsedContent.extractedData || parsedContent,
-      confidence: 0.85,
-      processingMethod: 'abacus_ai'
-    }
+    throw new Error('All Abacus AI endpoint combinations failed')
     
   } catch (error) {
     console.error("processWithAbacusAI: Error:", error.message)
