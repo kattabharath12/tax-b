@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     }
 
     // Create upload directory if it doesn't exist
-    const uploadDir = join(process.cwd(), 'uploads', 'documents')
+    const uploadDir = join('/tmp', 'uploads', 'documents')
     await mkdir(uploadDir, { recursive: true })
 
     // Generate unique filename
