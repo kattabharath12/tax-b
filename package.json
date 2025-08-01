@@ -2,7 +2,7 @@
   "name": "app",
   "private": true,
   "scripts": {
-    "build": "prisma generate && next build --no-lint",
+    "build": "prisma generate && next build --experimental-build-mode=compile",
     "start": "prisma migrate deploy && next start",
     "postinstall": "prisma generate"
   },
