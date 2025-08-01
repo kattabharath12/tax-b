@@ -1,9 +1,31 @@
 import { PrismaClient } from '@prisma/client'
 
-const globalForPrisma = globalThis as unknown as {
-  prisma: PrismaClient | undefined
+declare global {
+  var prisma: PrismaClient | undefined
 }
 
-export const prisma = globalForPrisma.prisma ?? new PrismaClient()
+let prisma: PrismaClient
 
-if (process.env.NODE_ENV !== 'production') globalForPrisma.prisma = prisma
+if (process.env.NODE_ENV === 'production') {
+  // In production, always create a new instance and connect immediately
+  prisma = new PrismaClient({
+    log: ['error'],
+  })
+  
+  // Force immediate connection
+  prisma.$connect().then(() => {
+    console.log('✅ Prisma connected successfully')
+  }).catch((error) => {
+    console.error('❌ Prisma connection failed:', error)
+  })
+} else {
+  // In development, use global instance
+  if (!global.prisma) {
+    global.prisma = new PrismaClient({
+      log: ['query', 'info', 'warn', 'error'],
+    })
+  }
+  prisma = global.prisma
+}
+
+export { prisma }
