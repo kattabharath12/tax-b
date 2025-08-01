@@ -6,3 +6,7 @@ node_modules
 uploads/
 README.md
 .gitignore
+tsconfig.tsbuildinfo
+.next/cache
+*.tsbuildinfo
+.tsbuildinfo
