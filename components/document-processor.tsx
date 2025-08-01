@@ -65,112 +65,84 @@ export function DocumentProcessor({
     }))
   }
 
-  const processDocument = async () => {
-    if (!state.file) return
+  // Replace the processDocument function in your DocumentProcessor with this:
 
-    setState(prev => ({ ...prev, uploading: true, status: 'uploading', progress: 0 }))
+const processDocument = async () => {
+  if (!state.file) return
 
-    try {
-      // Upload the document
-      const formData = new FormData()
-      formData.append('file', state.file)
-      formData.append('taxReturnId', taxReturnId)
+  setState(prev => ({ ...prev, uploading: true, status: 'uploading', progress: 0 }))
 
-      setState(prev => ({ ...prev, progress: 30, message: 'Uploading document...' }))
+  try {
+    // Upload the document
+    const formData = new FormData()
+    formData.append('file', state.file)
+    formData.append('taxReturnId', taxReturnId)
 
-      const uploadResponse = await fetch(`/api/documents/upload`, {
-        method: 'POST',
-        body: formData
-      })
+    setState(prev => ({ ...prev, progress: 30, message: 'Uploading document...' }))
 
-      if (!uploadResponse.ok) {
-        throw new Error('Failed to upload document')
-      }
+    const uploadResponse = await fetch(`/api/documents/upload`, {
+      method: 'POST',
+      body: formData
+    })
 
-      const document = await uploadResponse.json()
-      setState(prev => ({ 
-        ...prev, 
-        document, 
-        uploading: false, 
-        processing: true, 
-        status: 'processing',
-        progress: 50,
-        message: 'Extracting data from document...'
-      }))
+    if (!uploadResponse.ok) {
+      throw new Error('Failed to upload document')
+    }
 
-      onDocumentUploaded?.(document)
+    const document = await uploadResponse.json()
+    setState(prev => ({ 
+      ...prev, 
+      document, 
+      uploading: false, 
+      processing: true, 
+      status: 'processing',
+      progress: 50,
+      message: 'Processing document with AI...'
+    }))
 
-      // Process the document
-      const processResponse = await fetch(`/api/documents/${document.id}/process`, {
-        method: 'POST'
-      })
+    onDocumentUploaded?.(document)
 
-      if (!processResponse.ok) {
-        throw new Error('Failed to process document')
-      }
+    // Process the document - UPDATED FOR SIMPLE JSON RESPONSE
+    setState(prev => ({ ...prev, progress: 70, message: 'Extracting data from document...' }))
 
-      const reader = processResponse.body?.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let currentProgress = 50
+    const processResponse = await fetch(`/api/documents/${document.id}/process`, {
+      method: 'POST'
+    })
 
-      while (reader) {
-        const { done, value } = await reader.read()
-        if (done) break
+    if (!processResponse.ok) {
+      throw new Error('Failed to process document')
+    }
 
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n')
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6)
-            if (data === '[DONE]') {
-              // Processing complete
-              try {
-                const extractedData = JSON.parse(buffer)
-                setState(prev => ({
-                  ...prev,
-                  processing: false,
-                  status: 'completed',
-                  progress: 100,
-                  message: 'Document processed successfully',
-                  extractedData
-                }))
-                onDocumentProcessed(extractedData)
-                return
-              } catch (error) {
-                throw new Error('Failed to parse extracted data')
-              }
-            }
-            
-            try {
-              const parsed = JSON.parse(data)
-              buffer += parsed.content
-              currentProgress = Math.min(95, currentProgress + 5)
-              setState(prev => ({
-                ...prev,
-                progress: currentProgress,
-                message: 'Analyzing document content...'
-              }))
-            } catch (e) {
-              // Skip invalid JSON
-            }
-          }
-        }
-      }
+    // Handle simple JSON response (not streaming)
+    const result = await processResponse.json()
 
-    } catch (error) {
-      console.error('Document processing error:', error)
+    if (result.success) {
+      // Processing completed successfully
       setState(prev => ({
         ...prev,
-        uploading: false,
         processing: false,
-        status: 'error',
-        progress: 0,
-        message: error instanceof Error ? error.message : 'An error occurred during processing'
+        status: 'completed',
+        progress: 100,
+        message: 'Document processed successfully',
+        extractedData: result
       }))
+      onDocumentProcessed(result)
+    } else {
+      throw new Error(result.details || 'Processing failed')
     }
+
+  } catch (error) {
+    console.error('Document processing error:', error)
+    setState(prev => ({
+      ...prev,
+      uploading: false,
+      processing: false,
+      status: 'error',
+      progress: 0,
+      message: error instanceof Error ? error.message : 'An error occurred during processing'
+    }))
   }
+}
 
   const getDocumentTypeLabel = (documentType: string) => {
     const labels: Record<string, string> = {
