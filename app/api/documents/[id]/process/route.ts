@@ -12,7 +12,7 @@ interface ExtractedTaxData {
   ocrText: string
   extractedData: any
   confidence: number
-  processingMethod?: 'google_document_ai' | 'abacus_ai'
+  processingMethod: 'google_document_ai'
 }
 
 export async function POST(
@@ -76,18 +76,16 @@ export async function POST(
       process.env.GOOGLE_CLOUD_W2_PROCESSOR_ID &&
       process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON
     )
-    const hasAbacusAI = !!process.env.ABACUSAI_API_KEY
 
     console.log("Environment check:", {
       hasGoogleDocAI,
-      hasAbacusAI,
       googleProject: process.env.GOOGLE_CLOUD_PROJECT_ID
     })
 
-    if (!hasGoogleDocAI && !hasAbacusAI) {
-      console.log("❌ No AI service configured")
+    if (!hasGoogleDocAI) {
+      console.log("❌ Google Document AI not configured")
       return NextResponse.json(
-        { error: "No document processing service configured" }, 
+        { error: "Google Document AI service not configured" }, 
         { status: 500 }
       )
     }
@@ -103,31 +101,10 @@ export async function POST(
     })
     console.log("✅ Status updated")
 
-    // Step 7: Process document
-    console.log("7. Starting document processing...")
-    let extractedTaxData: ExtractedTaxData
-
-    if (hasGoogleDocAI) {
-      console.log("7a. Trying Google Document AI first...")
-      try {
-        extractedTaxData = await processWithGoogleDocumentAI(document)
-        console.log("✅ Google Document AI processing successful")
-      } catch (googleError) {
-        console.log("❌ Google Document AI failed:", googleError.message)
-        
-        if (hasAbacusAI) {
-          console.log("7b. Falling back to Abacus AI...")
-          extractedTaxData = await processWithAbacusAI(document)
-          console.log("✅ Abacus AI fallback successful")
-        } else {
-          throw googleError
-        }
-      }
-    } else {
-      console.log("7b. Using Abacus AI directly...")
-      extractedTaxData = await processWithAbacusAI(document)
-      console.log("✅ Abacus AI processing successful")
-    }
+    // Step 7: Process document with Google Document AI
+    console.log("7. Starting Google Document AI processing...")
+    const extractedTaxData = await processWithGoogleDocumentAI(document)
+    console.log("✅ Google Document AI processing successful")
 
     // Step 8: Save results
     console.log("8. Saving results to database...")
@@ -243,7 +220,7 @@ async function setupGoogleCredentials() {
   }
 }
 
-// ✅ COMPLETE Google Document AI processing function
+// Google Document AI processing function with DYNAMIC extraction (no predefined values)
 async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxData> {
   console.log("processWithGoogleDocumentAI: Starting...")
   
@@ -316,7 +293,7 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
     console.log("processWithGoogleDocumentAI: Extracted text length:", ocrText.length)
     console.log("processWithGoogleDocumentAI: Found entities:", entities.length)
     
-    // ✅ Initialize extractedData here
+    // Initialize extractedData
     const extractedData: any = {}
     
     // Process entities from Google Document AI
@@ -367,9 +344,9 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
       }
     })
     
-    // If no entities found, try to extract data from OCR text using regex
+    // If no entities found, try to extract data from OCR text using DYNAMIC regex
     if (Object.keys(extractedData).length === 0 && ocrText) {
-      console.log("processWithGoogleDocumentAI: No entities found, trying regex extraction from OCR text")
+      console.log("processWithGoogleDocumentAI: No entities found, trying DYNAMIC regex extraction from OCR text")
       
       // ===== DEBUGGING SECTION =====
       console.log('=== DEBUGGING EXTRACTED TEXT ===')
@@ -385,69 +362,94 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
         }
       })
       
-      // ===== ENHANCED EXTRACTION =====
-      console.log('🎯 Starting enhanced extraction strategies...')
+      // ===== DYNAMIC EXTRACTION (NO PREDEFINED VALUES) =====
+      console.log('🎯 Starting dynamic extraction strategies...')
       
-      // Strategy 1: Look for employee names (more comprehensive patterns)
+      // Strategy 1: Look for employee names (dynamic patterns)
       console.log('🔍 Strategy 1: Employee name patterns')
+      
       const employeePatterns = [
-        /Employee.*?name.*?\n([A-Z][A-Za-z\s,.-]+)/i,
-        /^([A-Z][A-Z\s]{5,40})$/gm, // All caps line (common for names)
-        /([A-Z][A-Z\s]+[A-Z])\s*\n/g, // All caps followed by newline
-        /employee.*?([A-Z][a-zA-Z]+\s+[A-Z][a-zA-Z]+)/gi,
-        /^\s*([A-Z][A-Za-z]+\s+[A-Z][A-Za-z]+)\s*$/gm // First Last format on its own line
+        // Look for "Employee's name, address, and ZIP code" followed by name
+        /Employee's name, address, and ZIP code\s*\n([A-Z][A-Za-z\s,.-]+)/i,
+        // Look for pattern: name followed by address (APT, SUITE, street number)
+        /\n([A-Z][A-Z\s]{5,40})\n\d+.*(?:APT|SUITE|DRIVE|ST|STREET|ROAD|AVE|AVENUE)/gi,
+        // All caps line that looks like a name (2+ words, reasonable length)
+        /^([A-Z][A-Z\s]{5,40})$/gm
       ]
       
       for (const pattern of employeePatterns) {
         const matches = [...ocrText.matchAll(pattern)]
         for (const match of matches) {
           const name = match[1]?.trim()
-          if (name && name.length >= 3 && name.length <= 50) {
-            // Validate it's actually a name
-            if (!/\d/.test(name) && !/box|form|wage|tax|copy|void|2024|2023/i.test(name)) {
-              extractedData.employeeName = name
-              console.log('✅ Found employee name:', name)
-              break
+          console.log('🔍 Testing name match:', name)
+          
+          if (name && name.length >= 5 && name.length <= 50) {
+            // Validate it's actually a name (not form fields)
+            if (/^[A-Z][A-Z\s]+$/.test(name) && 
+                !/BOX|FORM|WAGE|TAX|COPY|VOID|2024|2023|EMPLOYER|EMPLOYEE|UNIVERSITY|COLLEGE|CORP|LLC|INC|DRIVE|SUITE|STREET|ROAD|AVE|DENTON|TEXAS|CALIFORNIA|FLORIDA|NEW YORK|CHICAGO|DALLAS|HOUSTON|ATLANTA/i.test(name)) {
+              
+              // Check if it looks like a person's name (2+ words)
+              const words = name.split(/\s+/)
+              if (words.length >= 2 && words.every(word => word.length >= 2)) {
+                extractedData.employeeName = name
+                console.log('✅ Found employee name:', name)
+                break
+              }
             }
           }
         }
         if (extractedData.employeeName) break
       }
       
-      // Strategy 2: Look for employer name
+      // Strategy 2: Look for employer name (dynamic patterns)
       console.log('🔍 Strategy 2: Employer name patterns')
+      
       const employerPatterns = [
-        /Employer.*?name.*?\n([A-Za-z\s,.'&-]+)/i,
-        /([A-Za-z\s,.'&-]+(?:LLC|Inc|Corp|Company|Co\.|and Sons))/gi,
-        /employer.*?([A-Za-z\s,.'&-]{3,50})/gi
+        // Look for "Employer's name, address, and ZIP code" followed by name
+        /Employer's name, address, and ZIP code\s*\n([A-Za-z\s,.'&-]+)/i,
+        // Look for company indicators (UNIVERSITY, COMPANY, CORP, etc.)
+        /\n([A-Z\s]+(?:UNIVERSITY|COLLEGE|COMPANY|CORPORATION|CORP|LLC|INC|GROUP|SYSTEMS|SERVICES|SOLUTIONS)[A-Z\s]*)/gi,
+        // Look for organization names (multiple caps words, longer than person names)
+        /\n([A-Z][A-Z\s]{10,80})\n.*(?:DRIVE|STREET|ROAD|AVE|SUITE)/gi
       ]
       
       for (const pattern of employerPatterns) {
         const match = ocrText.match(pattern)
-        if (match && match[1]) {
-          const name = match[1].trim()
-          if (name.length >= 3 && name.length <= 80) {
-            extractedData.employerName = name
-            console.log('✅ Found employer name:', name)
-            break
+        if (match) {
+          const name = match[1]?.trim()
+          console.log('🔍 Testing employer match:', name)
+          
+          if (name && name.length >= 3 && name.length <= 100) {
+            // Clean up the name
+            const cleanName = name.replace(/\n/g, ' ').trim()
+            // Validate it's not form text
+            if (cleanName && !/BOX|FORM|WAGE|TAX|COPY|VOID|2024|2023|EMPLOYEE/i.test(cleanName)) {
+              extractedData.employerName = cleanName
+              console.log('✅ Found employer name:', cleanName)
+              break
+            }
           }
         }
       }
       
-      // Strategy 3: Look for specific amounts and identifiers
-      console.log('🔍 Strategy 3: Specific data extraction')
+      // Strategy 3: Look for wages (Box 1) - dynamic amount detection
+      console.log('🔍 Strategy 3: Wage extraction')
       
-      // Look for wages in Box 1
       const wagePatterns = [
-        /1\s+Wages.*?([0-9,]+\.?[0-9]*)/i,
-        /wages.*?([0-9,]+\.?[0-9]*)/gi,
-        /\$([0-9,]+\.?[0-9]*)/g
+        // Box 1 wages pattern
+        /1\s+Wages,?\s*tips,?\s*other\s*comp\.?\s*\n?\s*([0-9,]+\.?[0-9]*)/gi,
+        // General wages pattern
+        /Wages,?\s*tips,?\s*other\s*comp\.?\s*\n?\s*([0-9,]+\.?[0-9]*)/gi,
+        // Look for "1" followed by amount on next line or same line
+        /\b1\b.*?\n?\s*([0-9,]+\.[0-9]{2})/g
       ]
       
       for (const pattern of wagePatterns) {
         const match = ocrText.match(pattern)
-        if (match) {
-          const amount = match[1] ? match[1].replace(/,/g, '') : match[0].replace(/[$,]/g, '')
+        if (match && match[1]) {
+          const amount = match[1].replace(/,/g, '')
+          console.log('🔍 Testing wage match:', amount)
+          
           if (!isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
             extractedData.wages = amount
             console.log('✅ Found wages:', amount)
@@ -456,68 +458,112 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
         }
       }
       
-      // Look for federal tax withheld
+      // Strategy 4: Look for federal tax withheld (Box 2) - dynamic amount detection
+      console.log('🔍 Strategy 4: Federal tax extraction')
+      
       const fedTaxPatterns = [
-        /2\s+Federal.*?([0-9,]+\.?[0-9]*)/i,
-        /federal.*?tax.*?([0-9,]+\.?[0-9]*)/gi
+        // Box 2 federal tax pattern
+        /2\s+Federal\s*income\s*tax\s*withheld\s*\n?\s*([0-9,]+\.?[0-9]*)/gi,
+        // General federal tax pattern
+        /Federal\s*income\s*tax\s*withheld\s*\n?\s*([0-9,]+\.?[0-9]*)/gi,
+        // Look for "2" followed by amount
+        /\b2\b.*?\n?\s*([0-9,]+\.[0-9]{2})/g
       ]
       
       for (const pattern of fedTaxPatterns) {
         const match = ocrText.match(pattern)
-        if (match) {
-          const amount = match[1] ? match[1].replace(/,/g, '') : match[0].replace(/[$,]/g, '')
-          if (!isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
+        if (match && match[1]) {
+          const amount = match[1].replace(/,/g, '')
+          console.log('🔍 Testing federal tax match:', amount)
+          
+          if (!isNaN(parseFloat(amount)) && parseFloat(amount) >= 0) {
             extractedData.federalTaxWithheld = amount
-            console.log('✅ Found federal tax:', amount)
+            console.log('✅ Found federal tax withheld:', amount)
             break
           }
         }
       }
       
-      // Look for EIN
-      const einMatch = ocrText.match(/(\d{2}-\d{7})/g)
-      if (einMatch) {
-        extractedData.employerEIN = einMatch[0]
-        console.log('✅ Found EIN:', einMatch[0])
-      }
+      // Strategy 5: Look for EIN (Employer Federal ID)
+      console.log('🔍 Strategy 5: EIN extraction')
       
-      // Look for SSN
-      const ssnMatch = ocrText.match(/(\d{3}-\d{2}-\d{4})/g)
-      if (ssnMatch) {
-        extractedData.employeeSSN = ssnMatch[0]
-        console.log('✅ Found SSN:', ssnMatch[0])
-      }
+      const einPatterns = [
+        /Employer's FED ID number\s*\n?([0-9]{2}-[0-9]{7})/i,
+        /FED ID number\s*\n?([0-9]{2}-[0-9]{7})/i,
+        /\b([0-9]{2}-[0-9]{7})\b/g // Generic EIN pattern
+      ]
       
-      // Strategy 4: If still no employee name, try aggressive line-by-line search
-      if (!extractedData.employeeName) {
-        console.log('🔍 Strategy 4: Aggressive name search')
-        
-        for (let i = 0; i < Math.min(30, lines.length); i++) {
-          const line = lines[i].trim()
+      for (const pattern of einPatterns) {
+        const match = ocrText.match(pattern)
+        if (match) {
+          const ein = match[1] || match[0]
+          console.log('🔍 Testing EIN match:', ein)
           
-          // Look for lines that are likely names
-          if (line.length >= 5 && line.length <= 40) {
-            // All caps or title case, letters and spaces only
-            if (/^[A-Z][A-Z\s]+$/.test(line) || /^[A-Z][a-z]+\s+[A-Z][a-z]+/.test(line)) {
-              // Not a form field or number
-              if (!/^(FORM|BOX|WAGE|TAX|COPY|VOID|2024|2023|\d|EMPLOYEE|EMPLOYER)/.test(line)) {
-                extractedData.employeeName = line
-                console.log('✅ Found employee name (aggressive):', line)
-                break
-              }
-            }
+          if (/^[0-9]{2}-[0-9]{7}$/.test(ein)) {
+            extractedData.employerEIN = ein
+            console.log('✅ Found EIN:', ein)
+            break
           }
         }
       }
       
-      // Log all found data patterns
-      console.log('💰 Looking for all dollar amounts:')
-      const moneyMatches = [...ocrText.matchAll(/\$?([0-9,]+\.?[0-9]*)/g)]
-      console.log('Money matches found:', moneyMatches.slice(0, 10).map(m => m[1]))
+      // Strategy 6: Look for SSN (Employee Social Security Number)
+      console.log('🔍 Strategy 6: SSN extraction')
       
-      console.log('🔤 Looking for potential name patterns:')
-      const nameMatches = [...ocrText.matchAll(/([A-Z][A-Z\s]{10,40})/g)]
-      console.log('Name patterns found:', nameMatches.map(m => m[1]?.trim()).filter(Boolean))
+      const ssnPatterns = [
+        /Employee's SSA number\s*\n?(XXX-XX-[0-9]{4})/i,
+        /SSA number\s*\n?(XXX-XX-[0-9]{4})/i,
+        /\b(XXX-XX-[0-9]{4})\b/g, // Masked SSN
+        /\b([0-9]{3}-[0-9]{2}-[0-9]{4})\b/g // Full SSN (if not masked)
+      ]
+      
+      for (const pattern of ssnPatterns) {
+        const match = ocrText.match(pattern)
+        if (match) {
+          const ssn = match[1] || match[0]
+          console.log('🔍 Testing SSN match:', ssn)
+          
+          if (/^(XXX-XX-[0-9]{4}|[0-9]{3}-[0-9]{2}-[0-9]{4})$/.test(ssn)) {
+            extractedData.employeeSSN = ssn
+            console.log('✅ Found SSN:', ssn)
+            break
+          }
+        }
+      }
+      
+      // Strategy 7: Extract other common W-2 fields
+      console.log('🔍 Strategy 7: Additional W-2 fields')
+      
+      // Social Security wages (Box 3)
+      const ssWagesMatch = ocrText.match(/3\s+Social\s*security\s*wages\s*\n?\s*([0-9,]+\.?[0-9]*)/gi)
+      if (ssWagesMatch && ssWagesMatch[0]) {
+        const match = ssWagesMatch[0].match(/([0-9,]+\.?[0-9]*)/)
+        if (match) {
+          extractedData.socialSecurityWages = match[1].replace(/,/g, '')
+          console.log('✅ Found Social Security wages:', extractedData.socialSecurityWages)
+        }
+      }
+      
+      // Medicare wages (Box 5)
+      const medicareWagesMatch = ocrText.match(/5\s+Medicare\s*wages\s*and\s*tips\s*\n?\s*([0-9,]+\.?[0-9]*)/gi)
+      if (medicareWagesMatch && medicareWagesMatch[0]) {
+        const match = medicareWagesMatch[0].match(/([0-9,]+\.?[0-9]*)/)
+        if (match) {
+          extractedData.medicareWages = match[1].replace(/,/g, '')
+          console.log('✅ Found Medicare wages:', extractedData.medicareWages)
+        }
+      }
+      
+      // Log summary of what we found
+      console.log('📊 Final Extraction Summary:')
+      console.log('  Employee Name:', extractedData.employeeName || 'NOT FOUND')
+      console.log('  Employer Name:', extractedData.employerName || 'NOT FOUND')  
+      console.log('  Wages:', extractedData.wages || 'NOT FOUND')
+      console.log('  Federal Tax:', extractedData.federalTaxWithheld || 'NOT FOUND')
+      console.log('  Social Security Wages:', extractedData.socialSecurityWages || 'NOT FOUND')
+      console.log('  Medicare Wages:', extractedData.medicareWages || 'NOT FOUND')
+      console.log('  EIN:', extractedData.employerEIN || 'NOT FOUND')
+      console.log('  SSN:', extractedData.employeeSSN || 'NOT FOUND')
     }
     
     console.log("processWithGoogleDocumentAI: Final extracted data:", extractedData)
@@ -535,133 +581,4 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
     console.error("processWithGoogleDocumentAI: Error stack:", error.stack?.substring(0, 500))
     throw new Error(`Google Document AI processing failed: ${error.message}`)
   }
-}
-
-// Abacus AI processing with multiple endpoint/auth attempts
-async function processWithAbacusAI(document: any): Promise<ExtractedTaxData> {
-  console.log("processWithAbacusAI: Starting...")
-  
-  try {
-    const { readFile } = await import("fs/promises")
-    const fileBuffer = await readFile(document.filePath)
-    const base64String = fileBuffer.toString('base64')
-    
-    console.log("processWithAbacusAI: File read and converted to base64")
-    
-    // Try different endpoint formats for Abacus AI
-    const endpoints = [
-      'https://cloud.abacus.ai/api/v1/chat/completions',
-      'https://api.abacus.ai/v1/chat/completions', 
-      'https://apps.abacus.ai/v1/chat/completions'
-    ]
-    
-    const headers = {
-      'Content-Type': 'application/json'
-    }
-    
-    // Try different authentication formats
-    const authHeaders = [
-      { 'Authorization': `Bearer ${process.env.ABACUSAI_API_KEY}` },
-      { 'X-API-Key': process.env.ABACUSAI_API_KEY },
-      { 'API-Key': process.env.ABACUSAI_API_KEY },
-      { 'Authorization': `Token ${process.env.ABACUSAI_API_KEY}` }
-    ]
-    
-    const messages = [{
-      role: "user" as const,
-      content: [
-        {
-          type: "text",
-          text: getExtractionPrompt(document.documentType)
-        },
-        {
-          type: "image_url",
-          image_url: {
-            url: `data:${document.fileType || 'application/pdf'};base64,${base64String}`
-          }
-        }
-      ]
-    }]
-
-    const requestBody = {
-      model: 'gpt-4o-mini', // Try different model names
-      messages: messages,
-      max_tokens: 3000,
-      response_format: { type: "json_object" }
-    }
-
-    console.log("processWithAbacusAI: Trying different endpoints and auth methods...")
-    
-    // Try each combination
-    for (let i = 0; i < endpoints.length; i++) {
-      for (let j = 0; j < authHeaders.length; j++) {
-        try {
-          console.log(`processWithAbacusAI: Trying endpoint ${i + 1}/${endpoints.length}, auth ${j + 1}/${authHeaders.length}`)
-          
-          const response = await fetch(endpoints[i], {
-            method: 'POST',
-            headers: {
-              ...headers,
-              ...authHeaders[j]
-            },
-            body: JSON.stringify(requestBody)
-          })
-
-          console.log(`processWithAbacusAI: Response status: ${response.status}`)
-          
-          if (response.ok) {
-            const result = await response.json()
-            console.log("processWithAbacusAI: Success with endpoint:", endpoints[i])
-            console.log("processWithAbacusAI: Success with auth:", Object.keys(authHeaders[j])[0])
-            
-            const content = result.choices?.[0]?.message?.content
-
-            if (!content) {
-              throw new Error('No content returned from Abacus AI API')
-            }
-
-            const parsedContent = JSON.parse(content)
-            
-            return {
-              documentType: parsedContent.documentType || document.documentType,
-              ocrText: parsedContent.ocrText || '',
-              extractedData: parsedContent.extractedData || parsedContent,
-              confidence: 0.85,
-              processingMethod: 'abacus_ai'
-            }
-          } else {
-            const errorText = await response.text()
-            console.log(`processWithAbacusAI: Failed - ${response.status}: ${errorText}`)
-          }
-        } catch (fetchError) {
-          console.log(`processWithAbacusAI: Fetch error:`, fetchError.message)
-        }
-      }
-    }
-    
-    throw new Error('All Abacus AI endpoint combinations failed')
-    
-  } catch (error) {
-    console.error("processWithAbacusAI: Error:", error.message)
-    throw new Error(`Abacus AI processing failed: ${error.message}`)
-  }
-}
-
-function getExtractionPrompt(documentType: string): string {
-  return `Please extract all tax-related information from this document and return it in JSON format.
-
-Please respond in JSON format with the following structure:
-{
-  "documentType": "${documentType}",
-  "ocrText": "Full OCR text from the document",
-  "extractedData": {
-    // Document-specific fields based on document type
-    "payerName": "Payer/employer name if applicable",
-    "recipientName": "Recipient/employee name if applicable",
-    "incomeAmount": "Any income amounts",
-    "taxWithheld": "Any tax withheld amounts"
-  }
-}
-
-Respond with raw JSON only. Do not include code blocks, markdown, or any other formatting.`
 }
