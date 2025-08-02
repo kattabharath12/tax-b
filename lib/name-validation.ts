@@ -1,4 +1,4 @@
-// Create/Replace: lib/name-validation.ts
+// Replace your lib/name-validation.ts with this fixed version
 
 export interface NameValidationResult {
   isValid: boolean
@@ -15,22 +15,40 @@ export interface NameValidationResult {
 }
 
 export function extractNamesFromDocument(extractedData: any): string[] {
+  // Add safety checks for extractedData
+  if (!extractedData || typeof extractedData !== 'object') {
+    console.warn('extractNamesFromDocument: Invalid extractedData provided:', extractedData)
+    return []
+  }
+
   const names: string[] = []
   
-  if (extractedData?.employeeName) {
-    names.push(extractedData.employeeName)
+  // Safely extract employee name
+  if (extractedData?.employeeName && typeof extractedData.employeeName === 'string') {
+    names.push(extractedData.employeeName.trim())
   }
   
-  if (extractedData?.recipientName) {
-    names.push(extractedData.recipientName)
+  // Safely extract recipient name
+  if (extractedData?.recipientName && typeof extractedData.recipientName === 'string') {
+    names.push(extractedData.recipientName.trim())
   }
   
-  if (extractedData?.employerName && !extractedData?.employeeName) {
-    // Only include employer name if no employee name found
-    names.push(extractedData.employerName)
+  // Only include employer name if no employee name found
+  if (extractedData?.employerName && 
+      typeof extractedData.employerName === 'string' && 
+      !extractedData?.employeeName) {
+    names.push(extractedData.employerName.trim())
   }
   
-  return names.filter(name => name && name.trim().length > 0)
+  // Filter out empty or invalid names
+  const validNames = names.filter(name => 
+    name && 
+    typeof name === 'string' && 
+    name.trim().length > 0
+  )
+  
+  console.log('Extracted names from document:', validNames)
+  return validNames
 }
 
 export function validateNames(
@@ -43,33 +61,38 @@ export function validateNames(
   documentNames: string[]
 ): NameValidationResult {
   
+  // Ensure documentNames is always an array
+  const safeDocumentNames = Array.isArray(documentNames) ? documentNames : []
+  
+  // Ensure profileNames is an object with safe defaults
+  const safeProfileNames = {
+    firstName: profileNames?.firstName || '',
+    lastName: profileNames?.lastName || '',
+    spouseFirstName: profileNames?.spouseFirstName || '',
+    spouseLastName: profileNames?.spouseLastName || ''
+  }
+
+  console.log('Name validation input:', {
+    documentNames: safeDocumentNames,
+    profileNames: safeProfileNames
+  })
+  
   // If no names to compare, validation fails
-  if (!documentNames.length) {
+  if (!safeDocumentNames.length) {
     return {
       isValid: false,
       confidence: 0,
       matches: { primaryTaxpayer: false, spouse: false },
       details: {
-        documentNames,
-        profileNames: [
-          `${profileNames.firstName || ''} ${profileNames.lastName || ''}`.trim(),
-          `${profileNames.spouseFirstName || ''} ${profileNames.spouseLastName || ''}`.trim()
-        ].filter(name => name.length > 0),
+        documentNames: safeDocumentNames,
+        profileNames: buildProfileNamesList(safeProfileNames),
         reason: 'No names found in document'
       }
     }
   }
 
-  // Build profile names list
-  const profileNamesList: string[] = []
-  
-  if (profileNames.firstName || profileNames.lastName) {
-    profileNamesList.push(`${profileNames.firstName || ''} ${profileNames.lastName || ''}`.trim())
-  }
-  
-  if (profileNames.spouseFirstName || profileNames.spouseLastName) {
-    profileNamesList.push(`${profileNames.spouseFirstName || ''} ${profileNames.spouseLastName || ''}`.trim())
-  }
+  // Build profile names list safely
+  const profileNamesList = buildProfileNamesList(safeProfileNames)
 
   // If no profile names, validation fails
   if (!profileNamesList.length || profileNamesList.every(name => !name.trim())) {
@@ -78,7 +101,7 @@ export function validateNames(
       confidence: 0,
       matches: { primaryTaxpayer: false, spouse: false },
       details: {
-        documentNames,
+        documentNames: safeDocumentNames,
         profileNames: profileNamesList,
         reason: 'No names in tax return profile'
       }
@@ -88,9 +111,13 @@ export function validateNames(
   // Check each document name against profile names
   let bestMatch = { score: 0, primaryMatch: false, spouseMatch: false, reason: '' }
 
-  for (const docName of documentNames) {
+  for (const docName of safeDocumentNames) {
+    if (!docName || typeof docName !== 'string') continue
+    
     for (let i = 0; i < profileNamesList.length; i++) {
       const profileName = profileNamesList[i]
+      if (!profileName || typeof profileName !== 'string') continue
+      
       const matchResult = compareNames(docName, profileName)
       
       if (matchResult.score > bestMatch.score) {
@@ -107,7 +134,7 @@ export function validateNames(
   // Determine if validation passes (require at least 70% confidence)
   const isValid = bestMatch.score >= 70
 
-  return {
+  const result = {
     isValid,
     confidence: bestMatch.score,
     matches: {
@@ -115,27 +142,74 @@ export function validateNames(
       spouse: bestMatch.spouseMatch
     },
     details: {
-      documentNames,
+      documentNames: safeDocumentNames,
       profileNames: profileNamesList,
       reason: bestMatch.reason
     }
   }
+
+  console.log('Name validation result:', result)
+  return result
+}
+
+// Helper function to safely build profile names list
+function buildProfileNamesList(profileNames: {
+  firstName: string
+  lastName: string
+  spouseFirstName: string
+  spouseLastName: string
+}): string[] {
+  const profileNamesList: string[] = []
+  
+  // Build primary taxpayer name
+  const primaryName = `${profileNames.firstName} ${profileNames.lastName}`.trim()
+  if (primaryName.length > 0) {
+    profileNamesList.push(primaryName)
+  }
+  
+  // Build spouse name
+  const spouseName = `${profileNames.spouseFirstName} ${profileNames.spouseLastName}`.trim()
+  if (spouseName.length > 0) {
+    profileNamesList.push(spouseName)
+  }
+
+  return profileNamesList
 }
 
 function compareNames(docName: string, profileName: string): { score: number; reason: string } {
-  if (!docName?.trim() || !profileName?.trim()) {
-    return { score: 0, reason: 'Empty name comparison' }
+  // Additional safety checks
+  if (!docName || !profileName || 
+      typeof docName !== 'string' || 
+      typeof profileName !== 'string') {
+    return { score: 0, reason: 'Invalid name types for comparison' }
+  }
+
+  const trimmedDocName = docName.trim()
+  const trimmedProfileName = profileName.trim()
+  
+  if (!trimmedDocName || !trimmedProfileName) {
+    return { score: 0, reason: 'Empty name comparison after trimming' }
   }
 
   // Normalize names (lowercase, remove special chars, extra spaces)
-  const normalizeString = (str: string) => 
-    str.toLowerCase()
-       .replace(/[^a-z\s]/g, '')
-       .replace(/\s+/g, ' ')
-       .trim()
+  const normalizeString = (str: string) => {
+    try {
+      return str.toLowerCase()
+               .replace(/[^a-z\s]/g, '')
+               .replace(/\s+/g, ' ')
+               .trim()
+    } catch (error) {
+      console.error('Error normalizing string:', str, error)
+      return ''
+    }
+  }
 
-  const docNormalized = normalizeString(docName)
-  const profileNormalized = normalizeString(profileName)
+  const docNormalized = normalizeString(trimmedDocName)
+  const profileNormalized = normalizeString(trimmedProfileName)
+
+  if (!docNormalized || !profileNormalized) {
+    return { score: 0, reason: 'Failed to normalize names' }
+  }
 
   // Exact match
   if (docNormalized === profileNormalized) {
