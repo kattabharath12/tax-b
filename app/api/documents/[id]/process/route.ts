@@ -220,7 +220,7 @@ async function setupGoogleCredentials() {
   }
 }
 
-// Google Document AI processing function with DYNAMIC extraction (no predefined values)
+// Google Document AI processing function with FIXED regex patterns
 async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxData> {
   console.log("processWithGoogleDocumentAI: Starting...")
   
@@ -344,7 +344,7 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
       }
     })
     
-    // If no entities found, try to extract data from OCR text using DYNAMIC regex
+    // If no entities found, try to extract data from OCR text using FIXED regex
     if (Object.keys(extractedData).length === 0 && ocrText) {
       console.log("processWithGoogleDocumentAI: No entities found, trying DYNAMIC regex extraction from OCR text")
       
@@ -362,195 +362,213 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
         }
       })
       
-      // ===== DYNAMIC EXTRACTION (NO PREDEFINED VALUES) =====
+      // ===== DYNAMIC EXTRACTION (FIXED REGEX PATTERNS) =====
       console.log('🎯 Starting dynamic extraction strategies...')
       
-      // Strategy 1: Look for employee names (dynamic patterns)
+      // Strategy 1: Look for employee names (FIXED - use match() for non-global patterns)
       console.log('🔍 Strategy 1: Employee name patterns')
       
-      const employeePatterns = [
-        // Look for "Employee's name, address, and ZIP code" followed by name
-        /Employee's name, address, and ZIP code\s*\n([A-Z][A-Za-z\s,.-]+)/i,
-        // Look for pattern: name followed by address (APT, SUITE, street number)
-        /\n([A-Z][A-Z\s]{5,40})\n\d+.*(?:APT|SUITE|DRIVE|ST|STREET|ROAD|AVE|AVENUE)/gi,
-        // All caps line that looks like a name (2+ words, reasonable length)
-        /^([A-Z][A-Z\s]{5,40})$/gm
-      ]
+      // Pattern 1: Look for "Employee's name, address, and ZIP code" followed by name
+      const employeePattern1 = /Employee's name, address, and ZIP code\s*\n([A-Z][A-Za-z\s,.-]+)/i
+      const match1 = ocrText.match(employeePattern1)
+      if (match1 && match1[1]) {
+        const name = match1[1].trim()
+        console.log('🔍 Testing employee name (pattern 1):', name)
+        if (name.length >= 5 && name.length <= 50) {
+          extractedData.employeeName = name
+          console.log('✅ Found employee name (pattern 1):', name)
+        }
+      }
       
-      for (const pattern of employeePatterns) {
-        const matches = [...ocrText.matchAll(pattern)]
-        for (const match of matches) {
+      // Pattern 2: Look for all caps names followed by address patterns (use global flag for matchAll)
+      if (!extractedData.employeeName) {
+        const employeePattern2 = /\n([A-Z][A-Z\s]{5,40})\n\d+.*(?:APT|SUITE|DRIVE|ST|STREET|ROAD|AVE|AVENUE)/gi
+        const matches2 = [...ocrText.matchAll(employeePattern2)]
+        for (const match of matches2) {
           const name = match[1]?.trim()
-          console.log('🔍 Testing name match:', name)
+          console.log('🔍 Testing employee name (pattern 2):', name)
           
           if (name && name.length >= 5 && name.length <= 50) {
-            // Validate it's actually a name (not form fields)
             if (/^[A-Z][A-Z\s]+$/.test(name) && 
-                !/BOX|FORM|WAGE|TAX|COPY|VOID|2024|2023|EMPLOYER|EMPLOYEE|UNIVERSITY|COLLEGE|CORP|LLC|INC|DRIVE|SUITE|STREET|ROAD|AVE|DENTON|TEXAS|CALIFORNIA|FLORIDA|NEW YORK|CHICAGO|DALLAS|HOUSTON|ATLANTA/i.test(name)) {
+                !/BOX|FORM|WAGE|TAX|COPY|VOID|2024|2023|EMPLOYER|EMPLOYEE|UNIVERSITY|COLLEGE|CORP|LLC|INC|DRIVE|SUITE|STREET|ROAD|AVE|DENTON|TEXAS|CALIFORNIA|FLORIDA/i.test(name)) {
               
-              // Check if it looks like a person's name (2+ words)
               const words = name.split(/\s+/)
               if (words.length >= 2 && words.every(word => word.length >= 2)) {
                 extractedData.employeeName = name
-                console.log('✅ Found employee name:', name)
+                console.log('✅ Found employee name (pattern 2):', name)
                 break
               }
             }
           }
         }
-        if (extractedData.employeeName) break
       }
       
-      // Strategy 2: Look for employer name (dynamic patterns)
-      console.log('🔍 Strategy 2: Employer name patterns')
-      
-      const employerPatterns = [
-        // Look for "Employer's name, address, and ZIP code" followed by name
-        /Employer's name, address, and ZIP code\s*\n([A-Za-z\s,.'&-]+)/i,
-        // Look for company indicators (UNIVERSITY, COMPANY, CORP, etc.)
-        /\n([A-Z\s]+(?:UNIVERSITY|COLLEGE|COMPANY|CORPORATION|CORP|LLC|INC|GROUP|SYSTEMS|SERVICES|SOLUTIONS)[A-Z\s]*)/gi,
-        // Look for organization names (multiple caps words, longer than person names)
-        /\n([A-Z][A-Z\s]{10,80})\n.*(?:DRIVE|STREET|ROAD|AVE|SUITE)/gi
-      ]
-      
-      for (const pattern of employerPatterns) {
-        const match = ocrText.match(pattern)
-        if (match) {
+      // Pattern 3: Look for simple all-caps names (use global flag for matchAll)
+      if (!extractedData.employeeName) {
+        const employeePattern3 = /^([A-Z][A-Z\s]{5,40})$/gm
+        const matches3 = [...ocrText.matchAll(employeePattern3)]
+        for (const match of matches3) {
           const name = match[1]?.trim()
-          console.log('🔍 Testing employer match:', name)
+          console.log('🔍 Testing employee name (pattern 3):', name)
           
-          if (name && name.length >= 3 && name.length <= 100) {
-            // Clean up the name
-            const cleanName = name.replace(/\n/g, ' ').trim()
-            // Validate it's not form text
-            if (cleanName && !/BOX|FORM|WAGE|TAX|COPY|VOID|2024|2023|EMPLOYEE/i.test(cleanName)) {
-              extractedData.employerName = cleanName
-              console.log('✅ Found employer name:', cleanName)
-              break
+          if (name && name.length >= 5 && name.length <= 50) {
+            if (!/BOX|FORM|WAGE|TAX|COPY|VOID|2024|2023|EMPLOYER|EMPLOYEE|UNIVERSITY|COLLEGE|CORP|LLC|INC|DRIVE|SUITE|STREET|ROAD|AVE|DENTON|TEXAS|CALIFORNIA|FLORIDA|NEW YORK|CHICAGO|DALLAS|HOUSTON|ATLANTA/i.test(name)) {
+              
+              const words = name.split(/\s+/)
+              if (words.length >= 2 && words.every(word => word.length >= 2)) {
+                extractedData.employeeName = name
+                console.log('✅ Found employee name (pattern 3):', name)
+                break
+              }
             }
           }
         }
       }
       
-      // Strategy 3: Look for wages (Box 1) - dynamic amount detection
+      // Strategy 2: Look for employer name (use match() for single results)
+      console.log('🔍 Strategy 2: Employer name patterns')
+      
+      // Pattern 1: Look for "Employer's name, address, and ZIP code" followed by name
+      const employerPattern1 = /Employer's name, address, and ZIP code\s*\n([A-Za-z\s,.'&-]+)/i
+      const empMatch1 = ocrText.match(employerPattern1)
+      if (empMatch1 && empMatch1[1]) {
+        const name = empMatch1[1].trim()
+        console.log('🔍 Testing employer name (pattern 1):', name)
+        if (name.length >= 3 && name.length <= 100) {
+          const cleanName = name.replace(/\n/g, ' ').trim()
+          if (cleanName && !/BOX|FORM|WAGE|TAX|COPY|VOID|2024|2023|EMPLOYEE/i.test(cleanName)) {
+            extractedData.employerName = cleanName
+            console.log('✅ Found employer name (pattern 1):', cleanName)
+          }
+        }
+      }
+      
+      // Pattern 2: Look for company indicators (use match() for single result)
+      if (!extractedData.employerName) {
+        const employerPattern2 = /\n([A-Z\s]+(?:UNIVERSITY|COLLEGE|COMPANY|CORPORATION|CORP|LLC|INC|GROUP|SYSTEMS|SERVICES|SOLUTIONS)[A-Z\s]*)/i
+        const empMatch2 = ocrText.match(employerPattern2)
+        if (empMatch2 && empMatch2[1]) {
+          const name = empMatch2[1].trim()
+          console.log('🔍 Testing employer name (pattern 2):', name)
+          if (name.length >= 3 && name.length <= 100) {
+            const cleanName = name.replace(/\n/g, ' ').trim()
+            if (cleanName && !/BOX|FORM|WAGE|TAX|COPY|VOID|2024|2023|EMPLOYEE/i.test(cleanName)) {
+              extractedData.employerName = cleanName
+              console.log('✅ Found employer name (pattern 2):', cleanName)
+            }
+          }
+        }
+      }
+      
+      // Strategy 3: Look for wages (Box 1) - use match() for single results
       console.log('🔍 Strategy 3: Wage extraction')
       
-      const wagePatterns = [
-        // Box 1 wages pattern
-        /1\s+Wages,?\s*tips,?\s*other\s*comp\.?\s*\n?\s*([0-9,]+\.?[0-9]*)/gi,
-        // General wages pattern
-        /Wages,?\s*tips,?\s*other\s*comp\.?\s*\n?\s*([0-9,]+\.?[0-9]*)/gi,
-        // Look for "1" followed by amount on next line or same line
-        /\b1\b.*?\n?\s*([0-9,]+\.[0-9]{2})/g
-      ]
+      const wagePattern1 = /1\s+Wages,?\s*tips,?\s*other\s*comp\.?\s*\n?\s*([0-9,]+\.?[0-9]*)/i
+      const wageMatch1 = ocrText.match(wagePattern1)
+      if (wageMatch1 && wageMatch1[1]) {
+        const amount = wageMatch1[1].replace(/,/g, '')
+        console.log('🔍 Testing wage match (pattern 1):', amount)
+        if (!isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
+          extractedData.wages = amount
+          console.log('✅ Found wages (pattern 1):', amount)
+        }
+      }
       
-      for (const pattern of wagePatterns) {
-        const match = ocrText.match(pattern)
-        if (match && match[1]) {
-          const amount = match[1].replace(/,/g, '')
-          console.log('🔍 Testing wage match:', amount)
-          
+      // Alternative wage pattern
+      if (!extractedData.wages) {
+        const wagePattern2 = /Wages,?\s*tips,?\s*other\s*comp\.?\s*\n?\s*([0-9,]+\.?[0-9]*)/i
+        const wageMatch2 = ocrText.match(wagePattern2)
+        if (wageMatch2 && wageMatch2[1]) {
+          const amount = wageMatch2[1].replace(/,/g, '')
+          console.log('🔍 Testing wage match (pattern 2):', amount)
           if (!isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
             extractedData.wages = amount
-            console.log('✅ Found wages:', amount)
-            break
+            console.log('✅ Found wages (pattern 2):', amount)
           }
         }
       }
       
-      // Strategy 4: Look for federal tax withheld (Box 2) - dynamic amount detection
+      // Strategy 4: Look for federal tax withheld (Box 2) - use match() for single results
       console.log('🔍 Strategy 4: Federal tax extraction')
       
-      const fedTaxPatterns = [
-        // Box 2 federal tax pattern
-        /2\s+Federal\s*income\s*tax\s*withheld\s*\n?\s*([0-9,]+\.?[0-9]*)/gi,
-        // General federal tax pattern
-        /Federal\s*income\s*tax\s*withheld\s*\n?\s*([0-9,]+\.?[0-9]*)/gi,
-        // Look for "2" followed by amount
-        /\b2\b.*?\n?\s*([0-9,]+\.[0-9]{2})/g
-      ]
+      const fedTaxPattern1 = /2\s+Federal\s*income\s*tax\s*withheld\s*\n?\s*([0-9,]+\.?[0-9]*)/i
+      const fedMatch1 = ocrText.match(fedTaxPattern1)
+      if (fedMatch1 && fedMatch1[1]) {
+        const amount = fedMatch1[1].replace(/,/g, '')
+        console.log('🔍 Testing federal tax match (pattern 1):', amount)
+        if (!isNaN(parseFloat(amount)) && parseFloat(amount) >= 0) {
+          extractedData.federalTaxWithheld = amount
+          console.log('✅ Found federal tax withheld (pattern 1):', amount)
+        }
+      }
       
-      for (const pattern of fedTaxPatterns) {
-        const match = ocrText.match(pattern)
-        if (match && match[1]) {
-          const amount = match[1].replace(/,/g, '')
-          console.log('🔍 Testing federal tax match:', amount)
-          
+      // Alternative federal tax pattern
+      if (!extractedData.federalTaxWithheld) {
+        const fedTaxPattern2 = /Federal\s*income\s*tax\s*withheld\s*\n?\s*([0-9,]+\.?[0-9]*)/i
+        const fedMatch2 = ocrText.match(fedTaxPattern2)
+        if (fedMatch2 && fedMatch2[1]) {
+          const amount = fedMatch2[1].replace(/,/g, '')
+          console.log('🔍 Testing federal tax match (pattern 2):', amount)
           if (!isNaN(parseFloat(amount)) && parseFloat(amount) >= 0) {
             extractedData.federalTaxWithheld = amount
-            console.log('✅ Found federal tax withheld:', amount)
-            break
+            console.log('✅ Found federal tax withheld (pattern 2):', amount)
           }
         }
       }
       
-      // Strategy 5: Look for EIN (Employer Federal ID)
+      // Strategy 5: Look for EIN (Employer Federal ID) - use match() for single results
       console.log('🔍 Strategy 5: EIN extraction')
       
-      const einPatterns = [
-        /Employer's FED ID number\s*\n?([0-9]{2}-[0-9]{7})/i,
-        /FED ID number\s*\n?([0-9]{2}-[0-9]{7})/i,
-        /\b([0-9]{2}-[0-9]{7})\b/g // Generic EIN pattern
-      ]
+      const einPattern1 = /Employer's FED ID number\s*\n?([0-9]{2}-[0-9]{7})/i
+      const einMatch1 = ocrText.match(einPattern1)
+      if (einMatch1 && einMatch1[1]) {
+        const ein = einMatch1[1]
+        console.log('🔍 Testing EIN match (pattern 1):', ein)
+        if (/^[0-9]{2}-[0-9]{7}$/.test(ein)) {
+          extractedData.employerEIN = ein
+          console.log('✅ Found EIN (pattern 1):', ein)
+        }
+      }
       
-      for (const pattern of einPatterns) {
-        const match = ocrText.match(pattern)
-        if (match) {
-          const ein = match[1] || match[0]
-          console.log('🔍 Testing EIN match:', ein)
-          
+      // Generic EIN pattern
+      if (!extractedData.employerEIN) {
+        const einPattern2 = /\b([0-9]{2}-[0-9]{7})\b/
+        const einMatch2 = ocrText.match(einPattern2)
+        if (einMatch2 && einMatch2[1]) {
+          const ein = einMatch2[1]
+          console.log('🔍 Testing EIN match (pattern 2):', ein)
           if (/^[0-9]{2}-[0-9]{7}$/.test(ein)) {
             extractedData.employerEIN = ein
-            console.log('✅ Found EIN:', ein)
-            break
+            console.log('✅ Found EIN (pattern 2):', ein)
           }
         }
       }
       
-      // Strategy 6: Look for SSN (Employee Social Security Number)
+      // Strategy 6: Look for SSN (Employee Social Security Number) - use match() for single results
       console.log('🔍 Strategy 6: SSN extraction')
       
-      const ssnPatterns = [
-        /Employee's SSA number\s*\n?(XXX-XX-[0-9]{4})/i,
-        /SSA number\s*\n?(XXX-XX-[0-9]{4})/i,
-        /\b(XXX-XX-[0-9]{4})\b/g, // Masked SSN
-        /\b([0-9]{3}-[0-9]{2}-[0-9]{4})\b/g // Full SSN (if not masked)
-      ]
+      const ssnPattern1 = /Employee's SSA number\s*\n?(XXX-XX-[0-9]{4})/i
+      const ssnMatch1 = ocrText.match(ssnPattern1)
+      if (ssnMatch1 && ssnMatch1[1]) {
+        const ssn = ssnMatch1[1]
+        console.log('🔍 Testing SSN match (pattern 1):', ssn)
+        if (/^XXX-XX-[0-9]{4}$/.test(ssn)) {
+          extractedData.employeeSSN = ssn
+          console.log('✅ Found SSN (pattern 1):', ssn)
+        }
+      }
       
-      for (const pattern of ssnPatterns) {
-        const match = ocrText.match(pattern)
-        if (match) {
-          const ssn = match[1] || match[0]
-          console.log('🔍 Testing SSN match:', ssn)
-          
-          if (/^(XXX-XX-[0-9]{4}|[0-9]{3}-[0-9]{2}-[0-9]{4})$/.test(ssn)) {
+      // Generic masked SSN pattern
+      if (!extractedData.employeeSSN) {
+        const ssnPattern2 = /\b(XXX-XX-[0-9]{4})\b/
+        const ssnMatch2 = ocrText.match(ssnPattern2)
+        if (ssnMatch2 && ssnMatch2[1]) {
+          const ssn = ssnMatch2[1]
+          console.log('🔍 Testing SSN match (pattern 2):', ssn)
+          if (/^XXX-XX-[0-9]{4}$/.test(ssn)) {
             extractedData.employeeSSN = ssn
-            console.log('✅ Found SSN:', ssn)
-            break
+            console.log('✅ Found SSN (pattern 2):', ssn)
           }
-        }
-      }
-      
-      // Strategy 7: Extract other common W-2 fields
-      console.log('🔍 Strategy 7: Additional W-2 fields')
-      
-      // Social Security wages (Box 3)
-      const ssWagesMatch = ocrText.match(/3\s+Social\s*security\s*wages\s*\n?\s*([0-9,]+\.?[0-9]*)/gi)
-      if (ssWagesMatch && ssWagesMatch[0]) {
-        const match = ssWagesMatch[0].match(/([0-9,]+\.?[0-9]*)/)
-        if (match) {
-          extractedData.socialSecurityWages = match[1].replace(/,/g, '')
-          console.log('✅ Found Social Security wages:', extractedData.socialSecurityWages)
-        }
-      }
-      
-      // Medicare wages (Box 5)
-      const medicareWagesMatch = ocrText.match(/5\s+Medicare\s*wages\s*and\s*tips\s*\n?\s*([0-9,]+\.?[0-9]*)/gi)
-      if (medicareWagesMatch && medicareWagesMatch[0]) {
-        const match = medicareWagesMatch[0].match(/([0-9,]+\.?[0-9]*)/)
-        if (match) {
-          extractedData.medicareWages = match[1].replace(/,/g, '')
-          console.log('✅ Found Medicare wages:', extractedData.medicareWages)
         }
       }
       
@@ -560,8 +578,6 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
       console.log('  Employer Name:', extractedData.employerName || 'NOT FOUND')  
       console.log('  Wages:', extractedData.wages || 'NOT FOUND')
       console.log('  Federal Tax:', extractedData.federalTaxWithheld || 'NOT FOUND')
-      console.log('  Social Security Wages:', extractedData.socialSecurityWages || 'NOT FOUND')
-      console.log('  Medicare Wages:', extractedData.medicareWages || 'NOT FOUND')
       console.log('  EIN:', extractedData.employerEIN || 'NOT FOUND')
       console.log('  SSN:', extractedData.employeeSSN || 'NOT FOUND')
     }
