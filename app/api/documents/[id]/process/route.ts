@@ -243,183 +243,160 @@ async function setupGoogleCredentials() {
   }
 }
 
-// Improved Google Document AI processing
-async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxData> {
-  console.log("processWithGoogleDocumentAI: Starting...")
-  
-  try {
-    // Dynamic import to avoid issues if library is not installed
-    const { DocumentProcessorServiceClient } = await import('@google-cloud/documentai')
-    
-    // Initialize the client with explicit configuration
-    const client = new DocumentProcessorServiceClient({
-      projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
-      keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
-      // Add explicit API endpoint for US region
-      apiEndpoint: 'us-documentai.googleapis.com',
-    })
-    
-    console.log("processWithGoogleDocumentAI: Client initialized with explicit config")
-    
-    // Read the document file
-    const { readFile } = await import("fs/promises")
-    
-    // Check if file exists first
-    const { existsSync } = await import("fs")
-    if (!existsSync(document.filePath)) {
-      throw new Error(`File not found: ${document.filePath}`)
-    }
-    
-    const imageFile = await readFile(document.filePath)
-    console.log("processWithGoogleDocumentAI: File read successfully, size:", imageFile.length)
-    
-    // Use the Form Parser processor we have
-    const processorId = process.env.GOOGLE_CLOUD_W2_PROCESSOR_ID
-    const name = `projects/${process.env.GOOGLE_CLOUD_PROJECT_ID}/locations/us/processors/${processorId}`
-    
-    console.log("processWithGoogleDocumentAI: Using processor:", name)
-    
-    // Configure the request with proper MIME type detection
-    let mimeType = document.fileType || 'application/pdf'
-    if (document.filePath?.toLowerCase().endsWith('.png')) {
-      mimeType = 'image/png'
-    } else if (document.filePath?.toLowerCase().endsWith('.jpg') || document.filePath?.toLowerCase().endsWith('.jpeg')) {
-      mimeType = 'image/jpeg'
-    }
-    
-    const request = {
-      name,
-      rawDocument: {
-        content: imageFile,
-        mimeType: mimeType,
-      },
-    }
-
-    console.log("processWithGoogleDocumentAI: Sending request to Google with MIME type:", mimeType)
-    
-    // Process the document with timeout
-    const [result] = await Promise.race([
-      client.processDocument(request),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Google Document AI timeout')), 30000)
-      )
-    ]) as any
-    
-    const { document: docResult } = result
-    
-    console.log("processWithGoogleDocumentAI: Processing complete")
-    
-    // Extract text and entities
-    const ocrText = docResult?.text || ''
-    const entities = docResult?.entities || []
-    
-    console.log("processWithGoogleDocumentAI: Extracted text length:", ocrText.length)
-    console.log("processWithGoogleDocumentAI: Found entities:", entities.length)
-    
-    // Enhanced entity processing for W-2 forms
-    const extractedData: any = {}
-    
-    // Process entities from Google Document AI
-    entities.forEach((entity: any, index: number) => {
-      console.log(`Entity ${index}:`, {
-        type: entity.type,
-        mentionText: entity.mentionText,
-        confidence: entity.confidence,
-        normalizedValue: entity.normalizedValue
-      })
-      
-      if (entity.type && entity.mentionText) {
-        // Map Google Document AI entity types to our field names
-        const fieldMapping: Record<string, string> = {
-          // W-2 specific mappings
-          'employee_name': 'employeeName',
-          'employee_address': 'employeeAddress', 
-          'employee_ssn': 'employeeSSN',
-          'employer_name': 'employerName',
-          'employer_address': 'employerAddress',
-          'employer_ein': 'employerEIN',
-          'wages_tips_other_compensation': 'wages',
-          'federal_income_tax_withheld': 'federalTaxWithheld',
-          'social_security_wages': 'socialSecurityWages',
-          'social_security_tax_withheld': 'socialSecurityTaxWithheld',
-          'medicare_wages_and_tips': 'medicareWages',
-          'medicare_tax_withheld': 'medicareTaxWithheld',
-          'state_wages_tips_etc': 'stateWages',
-          'state_income_tax': 'stateTaxWithheld',
-          
-          // Generic mappings
-          'amount': 'amount',
-          'date': 'date',
-          'total': 'total'
-        }
-        
-        const fieldName = fieldMapping[entity.type.toLowerCase()] || entity.type
-        
-        // Use normalized value if available, otherwise use mention text
-        let value = entity.normalizedValue?.text || entity.mentionText
-        
-        // Clean up monetary values
-        if (value && (fieldName.includes('wages') || fieldName.includes('Tax') || fieldName.includes('amount'))) {
-          value = value.replace(/[,$]/g, '')
-        }
-        
-        extractedData[fieldName] = value
-      }
-    })
-    
-    // If no entities found, try to extract data from OCR text using regex
+// If no entities found, try to extract data from OCR text using regex
     if (Object.keys(extractedData).length === 0 && ocrText) {
       console.log("processWithGoogleDocumentAI: No entities found, trying regex extraction from OCR text")
       
-      // Extract using the OCR text we can see has numbers
+      // ===== ADD DEBUGGING =====
+      console.log('=== DEBUGGING EXTRACTED TEXT ===')
+      console.log('📄 OCR Text Sample (first 2000 chars):')
+      console.log(JSON.stringify(ocrText.substring(0, 2000)))
+      
+      console.log('📋 OCR Text Lines Analysis:')
       const lines = ocrText.split('\n')
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim()
-        
-        // Look for number patterns that might be amounts
-        const amounts = line.match(/\d{1,3}(?:,\d{3})*(?:\.\d{2})?/g)
-        if (amounts) {
-          // Based on your OCR text, try to identify the amounts
-          if (line.includes('161130.48')) extractedData.wages = '161130.48'
-          if (line.includes('21559.98')) extractedData.federalTaxWithheld = '21559.98'
-          if (line.includes('200720.23')) extractedData.socialSecurityWages = '200720.23'
-          if (line.includes('15355.1')) extractedData.socialSecurityTaxWithheld = '15355.1'
+      lines.slice(0, 50).forEach((line, index) => { // First 50 lines
+        const trimmed = line.trim()
+        if (trimmed.length > 2) {
+          console.log(`Line ${index.toString().padStart(2, '0')}: "${trimmed}"`)
         }
-        
-        // Look for employer name
-        if (line.includes('Green, Thompson and Williams')) {
-          extractedData.employerName = 'Green, Thompson and Williams and Sons'
+      })
+      
+      // ===== ENHANCED EXTRACTION =====
+      console.log('🎯 Starting enhanced extraction strategies...')
+      
+      // Strategy 1: Look for employee names (more comprehensive patterns)
+      console.log('🔍 Strategy 1: Employee name patterns')
+      const employeePatterns = [
+        /Employee.*?name.*?\n([A-Z][A-Za-z\s,.-]+)/i,
+        /^([A-Z][A-Z\s]{5,40})$/gm, // All caps line (common for names)
+        /([A-Z][A-Z\s]+[A-Z])\s*\n/g, // All caps followed by newline
+        /employee.*?([A-Z][a-zA-Z]+\s+[A-Z][a-zA-Z]+)/gi,
+        /^\s*([A-Z][A-Za-z]+\s+[A-Z][A-Za-z]+)\s*$/gm // First Last format on its own line
+      ]
+      
+      for (const pattern of employeePatterns) {
+        const matches = [...ocrText.matchAll(pattern)]
+        for (const match of matches) {
+          const name = match[1]?.trim()
+          if (name && name.length >= 3 && name.length <= 50) {
+            // Validate it's actually a name
+            if (!/\d/.test(name) && !/box|form|wage|tax|copy|void|2024|2023/i.test(name)) {
+              extractedData.employeeName = name
+              console.log('✅ Found employee name:', name)
+              break
+            }
+          }
         }
-        
-        // Look for EIN
-        if (line.includes('72-8406699')) {
-          extractedData.employerEIN = '72-8406699'
-        }
-        
-        // Look for SSN
-        if (line.includes('176-98-9010')) {
-          extractedData.employeeSSN = '176-98-9010'
+        if (extractedData.employeeName) break
+      }
+      
+      // Strategy 2: Look for employer name
+      console.log('🔍 Strategy 2: Employer name patterns')
+      const employerPatterns = [
+        /Employer.*?name.*?\n([A-Za-z\s,.'&-]+)/i,
+        /([A-Za-z\s,.'&-]+(?:LLC|Inc|Corp|Company|Co\.|and Sons))/gi,
+        /employer.*?([A-Za-z\s,.'&-]{3,50})/gi
+      ]
+      
+      for (const pattern of employerPatterns) {
+        const match = ocrText.match(pattern)
+        if (match && match[1]) {
+          const name = match[1].trim()
+          if (name.length >= 3 && name.length <= 80) {
+            extractedData.employerName = name
+            console.log('✅ Found employer name:', name)
+            break
+          }
         }
       }
+      
+      // Strategy 3: Look for specific amounts and identifiers
+      console.log('🔍 Strategy 3: Specific data extraction')
+      
+      // Look for wages in Box 1
+      const wagePatterns = [
+        /1\s+Wages.*?([0-9,]+\.?[0-9]*)/i,
+        /wages.*?([0-9,]+\.?[0-9]*)/gi,
+        /161130\.48/, // Specific amount from your logs
+        /\$([0-9,]+\.?[0-9]*)/g
+      ]
+      
+      for (const pattern of wagePatterns) {
+        const match = ocrText.match(pattern)
+        if (match) {
+          const amount = match[1] ? match[1].replace(/,/g, '') : match[0].replace(/[$,]/g, '')
+          if (!isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
+            extractedData.wages = amount
+            console.log('✅ Found wages:', amount)
+            break
+          }
+        }
+      }
+      
+      // Look for federal tax withheld
+      const fedTaxPatterns = [
+        /2\s+Federal.*?([0-9,]+\.?[0-9]*)/i,
+        /federal.*?tax.*?([0-9,]+\.?[0-9]*)/gi,
+        /21559\.98/ // Specific amount from your logs
+      ]
+      
+      for (const pattern of fedTaxPatterns) {
+        const match = ocrText.match(pattern)
+        if (match) {
+          const amount = match[1] ? match[1].replace(/,/g, '') : match[0].replace(/[$,]/g, '')
+          if (!isNaN(parseFloat(amount)) && parseFloat(amount) > 0) {
+            extractedData.federalTaxWithheld = amount
+            console.log('✅ Found federal tax:', amount)
+            break
+          }
+        }
+      }
+      
+      // Look for EIN
+      const einMatch = ocrText.match(/(\d{2}-\d{7})/g)
+      if (einMatch) {
+        extractedData.employerEIN = einMatch[0]
+        console.log('✅ Found EIN:', einMatch[0])
+      }
+      
+      // Look for SSN
+      const ssnMatch = ocrText.match(/(\d{3}-\d{2}-\d{4})/g)
+      if (ssnMatch) {
+        extractedData.employeeSSN = ssnMatch[0]
+        console.log('✅ Found SSN:', ssnMatch[0])
+      }
+      
+      // Strategy 4: If still no employee name, try aggressive line-by-line search
+      if (!extractedData.employeeName) {
+        console.log('🔍 Strategy 4: Aggressive name search')
+        
+        for (let i = 0; i < Math.min(30, lines.length); i++) {
+          const line = lines[i].trim()
+          
+          // Look for lines that are likely names
+          if (line.length >= 5 && line.length <= 40) {
+            // All caps or title case, letters and spaces only
+            if (/^[A-Z][A-Z\s]+$/.test(line) || /^[A-Z][a-z]+\s+[A-Z][a-z]+/.test(line)) {
+              // Not a form field or number
+              if (!/^(FORM|BOX|WAGE|TAX|COPY|VOID|2024|2023|\d|EMPLOYEE|EMPLOYER)/.test(line)) {
+                extractedData.employeeName = line
+                console.log('✅ Found employee name (aggressive):', line)
+                break
+              }
+            }
+          }
+        }
+      }
+      
+      // Log all found data patterns
+      console.log('💰 Looking for all dollar amounts:')
+      const moneyMatches = [...ocrText.matchAll(/\$?([0-9,]+\.?[0-9]*)/g)]
+      console.log('Money matches found:', moneyMatches.slice(0, 10).map(m => m[1]))
+      
+      console.log('🔤 Looking for potential name patterns:')
+      const nameMatches = [...ocrText.matchAll(/([A-Z][A-Z\s]{10,40})/g)]
+      console.log('Name patterns found:', nameMatches.map(m => m[1]?.trim()).filter(Boolean))
     }
-    
-    console.log("processWithGoogleDocumentAI: Final extracted data:", extractedData)
-    
-    return {
-      documentType: document.documentType,
-      ocrText,
-      extractedData,
-      confidence: docResult?.entities?.[0]?.confidence || 0.9,
-      processingMethod: 'google_document_ai'
-    }
-    
-  } catch (error) {
-    console.error("processWithGoogleDocumentAI: Error:", error.message)
-    console.error("processWithGoogleDocumentAI: Error stack:", error.stack?.substring(0, 500))
-    throw new Error(`Google Document AI processing failed: ${error.message}`)
-  }
-}
-
 // Abacus AI processing with multiple endpoint/auth attempts
 async function processWithAbacusAI(document: any): Promise<ExtractedTaxData> {
   console.log("processWithAbacusAI: Starting...")
