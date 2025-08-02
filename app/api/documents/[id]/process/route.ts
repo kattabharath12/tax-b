@@ -184,8 +184,66 @@ export async function POST(
   }
 }
 
-// Replace your processWithGoogleDocumentAI function with this improved version:
+// Function to securely set up Google Cloud credentials at runtime
+async function setupGoogleCredentials() {
+  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON) {
+    console.log("No Google credentials JSON found in environment")
+    return
+  }
 
+  try {
+    // Parse and validate the JSON
+    const credentialsJson = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON)
+    
+    // Validate required fields
+    if (!credentialsJson.type || !credentialsJson.project_id || !credentialsJson.private_key) {
+      throw new Error("Invalid credentials JSON structure")
+    }
+    
+    console.log("✅ Credentials JSON parsed successfully")
+    console.log("Project ID:", credentialsJson.project_id)
+    console.log("Client email:", credentialsJson.client_email)
+    
+    // Create temp directory for credentials
+    const credentialsDir = '/tmp/credentials'
+    const credentialsPath = '/tmp/credentials/google-service-account.json'
+    
+    // Create directory if it doesn't exist
+    mkdirSync(credentialsDir, { recursive: true })
+    
+    // Fix the private key format - ensure proper line breaks
+    const fixedCredentials = {
+      ...credentialsJson,
+      private_key: credentialsJson.private_key.replace(/\\n/g, '\n')
+    }
+    
+    // Write the fixed credentials JSON to a temporary file
+    writeFileSync(credentialsPath, JSON.stringify(fixedCredentials, null, 2))
+    
+    // Set the environment variable for Google Cloud SDK
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath
+    
+    console.log("✅ Google Cloud credentials set up at runtime with fixed formatting")
+    
+    // Verify the file was written correctly
+    const { readFileSync } = await import("fs")
+    const writtenContent = readFileSync(credentialsPath, 'utf8')
+    const parsed = JSON.parse(writtenContent)
+    console.log("✅ Credentials file verified - project:", parsed.project_id)
+    
+    // Test if the private key format is correct
+    if (!parsed.private_key.includes('-----BEGIN PRIVATE KEY-----')) {
+      throw new Error("Private key format is incorrect")
+    }
+    console.log("✅ Private key format verified")
+    
+  } catch (error) {
+    console.error("❌ Failed to set up Google credentials:", error.message)
+    throw new Error(`Failed to set up Google credentials: ${error.message}`)
+  }
+}
+
+// Improved Google Document AI processing
 async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxData> {
   console.log("processWithGoogleDocumentAI: Starting...")
   
@@ -312,18 +370,6 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
     // If no entities found, try to extract data from OCR text using regex
     if (Object.keys(extractedData).length === 0 && ocrText) {
       console.log("processWithGoogleDocumentAI: No entities found, trying regex extraction from OCR text")
-      
-      // W-2 regex patterns
-      const patterns = {
-        employeeName: /(?:employee|emp)\s+name[:\s]+([^\n]+)/i,
-        employerName: /(?:employer|company)\s+name[:\s]+([^\n]+)/i,
-        wages: /(?:wages|compensation)[:\s]+\$?([0-9,]+\.?[0-9]*)/i,
-        federalTaxWithheld: /federal[^0-9]*tax[^0-9]*withheld[:\s]+\$?([0-9,]+\.?[0-9]*)/i,
-        socialSecurityWages: /social\s+security\s+wages[:\s]+\$?([0-9,]+\.?[0-9]*)/i,
-        medicareWages: /medicare\s+wages[:\s]+\$?([0-9,]+\.?[0-9]*)/i,
-        employerEIN: /(?:ein|employer\s+id)[:\s]+([0-9-]+)/i,
-        employeeSSN: /(?:ssn|social\s+security)[:\s]+([0-9-]+)/i
-      }
       
       // Extract using the OCR text we can see has numbers
       const lines = ocrText.split('\n')
