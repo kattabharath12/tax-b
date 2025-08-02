@@ -274,13 +274,42 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
 
     console.log("processWithGoogleDocumentAI: Sending request to Google with MIME type:", mimeType)
     
-    // Process the document with timeout
-    const [result] = await Promise.race([
-      client.processDocument(request),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Google Document AI timeout')), 30000)
-      )
-    ]) as any
+    // Process the document with extended timeout and retry logic
+    console.log("processWithGoogleDocumentAI: Sending request to Google Document AI...")
+    
+    let result
+    let attempts = 0
+    const maxAttempts = 3
+    const timeoutMs = 60000 // 60 seconds
+    
+    while (attempts < maxAttempts) {
+      attempts++
+      console.log(`processWithGoogleDocumentAI: Attempt ${attempts}/${maxAttempts}`)
+      
+      try {
+        const [apiResult] = await Promise.race([
+          client.processDocument(request),
+          new Promise((_, reject) => 
+            setTimeout(() => reject(new Error(`Google Document AI timeout after ${timeoutMs/1000} seconds`)), timeoutMs)
+          )
+        ]) as any
+        
+        result = apiResult
+        console.log("processWithGoogleDocumentAI: Successfully processed document")
+        break
+        
+      } catch (attemptError) {
+        console.log(`processWithGoogleDocumentAI: Attempt ${attempts} failed:`, attemptError.message)
+        
+        if (attempts === maxAttempts) {
+          throw attemptError
+        }
+        
+        // Wait before retry
+        console.log("processWithGoogleDocumentAI: Waiting 5 seconds before retry...")
+        await new Promise(resolve => setTimeout(resolve, 5000))
+      }
+    }
     
     const { document: docResult } = result
     
