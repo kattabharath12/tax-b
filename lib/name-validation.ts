@@ -1,270 +1,281 @@
-// Replace your lib/name-validation.ts with this fixed version
+"use client"
 
-export interface NameValidationResult {
-  isValid: boolean
-  confidence: number
-  matches: {
-    primaryTaxpayer: boolean
-    spouse: boolean
-  }
-  details: {
-    documentNames: string[]
-    profileNames: string[]
-    reason: string
-  }
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogDescription, 
+  DialogFooter, 
+  DialogHeader, 
+  DialogTitle 
+} from "@/components/ui/dialog"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Badge } from "@/components/ui/badge"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { AlertTriangle, CheckCircle, User, Users, Info } from "lucide-react"
+import { NameValidationResult } from "@/lib/name-validation"
+
+interface NameValidationDialogProps {
+  isOpen: boolean
+  onClose: () => void
+  onConfirm: (proceedWithMismatches: boolean) => void
+  validationResult: NameValidationResult | null
+  documentType: string
 }
 
-export function extractNamesFromDocument(extractedData: any): string[] {
-  // Add safety checks for extractedData
-  if (!extractedData || typeof extractedData !== 'object') {
-    console.warn('extractNamesFromDocument: Invalid extractedData provided:', extractedData)
-    return []
-  }
+export function NameValidationDialog({
+  isOpen,
+  onClose,
+  onConfirm,
+  validationResult,
+  documentType
+}: NameValidationDialogProps) {
+  const [loading, setLoading] = useState(false)
 
-  const names: string[] = []
-  
-  // Safely extract employee name
-  if (extractedData?.employeeName && typeof extractedData.employeeName === 'string') {
-    names.push(extractedData.employeeName.trim())
-  }
-  
-  // Safely extract recipient name
-  if (extractedData?.recipientName && typeof extractedData.recipientName === 'string') {
-    names.push(extractedData.recipientName.trim())
-  }
-  
-  // Only include employer name if no employee name found
-  if (extractedData?.employerName && 
-      typeof extractedData.employerName === 'string' && 
-      !extractedData?.employeeName) {
-    names.push(extractedData.employerName.trim())
-  }
-  
-  // Filter out empty or invalid names
-  const validNames = names.filter(name => 
-    name && 
-    typeof name === 'string' && 
-    name.trim().length > 0
-  )
-  
-  console.log('Extracted names from document:', validNames)
-  return validNames
-}
-
-export function validateNames(
-  profileNames: {
-    firstName?: string
-    lastName?: string
-    spouseFirstName?: string
-    spouseLastName?: string
-  },
-  documentNames: string[]
-): NameValidationResult {
-  
-  // Ensure documentNames is always an array
-  const safeDocumentNames = Array.isArray(documentNames) ? documentNames : []
-  
-  // Ensure profileNames is an object with safe defaults
-  const safeProfileNames = {
-    firstName: profileNames?.firstName || '',
-    lastName: profileNames?.lastName || '',
-    spouseFirstName: profileNames?.spouseFirstName || '',
-    spouseLastName: profileNames?.spouseLastName || ''
-  }
-
-  console.log('Name validation input:', {
-    documentNames: safeDocumentNames,
-    profileNames: safeProfileNames
-  })
-  
-  // If no names to compare, validation fails
-  if (!safeDocumentNames.length) {
-    return {
-      isValid: false,
-      confidence: 0,
-      matches: { primaryTaxpayer: false, spouse: false },
-      details: {
-        documentNames: safeDocumentNames,
-        profileNames: buildProfileNamesList(safeProfileNames),
-        reason: 'No names found in document'
-      }
-    }
-  }
-
-  // Build profile names list safely
-  const profileNamesList = buildProfileNamesList(safeProfileNames)
-
-  // If no profile names, validation fails
-  if (!profileNamesList.length || profileNamesList.every(name => !name.trim())) {
-    return {
-      isValid: false,
-      confidence: 0,
-      matches: { primaryTaxpayer: false, spouse: false },
-      details: {
-        documentNames: safeDocumentNames,
-        profileNames: profileNamesList,
-        reason: 'No names in tax return profile'
-      }
-    }
-  }
-
-  // Check each document name against profile names
-  let bestMatch = { score: 0, primaryMatch: false, spouseMatch: false, reason: '' }
-
-  for (const docName of safeDocumentNames) {
-    if (!docName || typeof docName !== 'string') continue
-    
-    for (let i = 0; i < profileNamesList.length; i++) {
-      const profileName = profileNamesList[i]
-      if (!profileName || typeof profileName !== 'string') continue
-      
-      const matchResult = compareNames(docName, profileName)
-      
-      if (matchResult.score > bestMatch.score) {
-        bestMatch = {
-          score: matchResult.score,
-          primaryMatch: i === 0, // First name in list is primary taxpayer
-          spouseMatch: i === 1,  // Second name in list is spouse
-          reason: matchResult.reason
-        }
-      }
-    }
-  }
-
-  // Determine if validation passes (require at least 70% confidence)
-  const isValid = bestMatch.score >= 70
-
-  const result = {
-    isValid,
-    confidence: bestMatch.score,
-    matches: {
-      primaryTaxpayer: bestMatch.primaryMatch,
-      spouse: bestMatch.spouseMatch
-    },
-    details: {
-      documentNames: safeDocumentNames,
-      profileNames: profileNamesList,
-      reason: bestMatch.reason
-    }
-  }
-
-  console.log('Name validation result:', result)
-  return result
-}
-
-// Helper function to safely build profile names list
-function buildProfileNamesList(profileNames: {
-  firstName: string
-  lastName: string
-  spouseFirstName: string
-  spouseLastName: string
-}): string[] {
-  const profileNamesList: string[] = []
-  
-  // Build primary taxpayer name
-  const primaryName = `${profileNames.firstName} ${profileNames.lastName}`.trim()
-  if (primaryName.length > 0) {
-    profileNamesList.push(primaryName)
-  }
-  
-  // Build spouse name
-  const spouseName = `${profileNames.spouseFirstName} ${profileNames.spouseLastName}`.trim()
-  if (spouseName.length > 0) {
-    profileNamesList.push(spouseName)
-  }
-
-  return profileNamesList
-}
-
-function compareNames(docName: string, profileName: string): { score: number; reason: string } {
-  // Additional safety checks
-  if (!docName || !profileName || 
-      typeof docName !== 'string' || 
-      typeof profileName !== 'string') {
-    return { score: 0, reason: 'Invalid name types for comparison' }
-  }
-
-  const trimmedDocName = docName.trim()
-  const trimmedProfileName = profileName.trim()
-  
-  if (!trimmedDocName || !trimmedProfileName) {
-    return { score: 0, reason: 'Empty name comparison after trimming' }
-  }
-
-  // Normalize names (lowercase, remove special chars, extra spaces)
-  const normalizeString = (str: string) => {
+  const handleConfirm = async (proceedWithMismatches: boolean) => {
+    setLoading(true)
     try {
-      return str.toLowerCase()
-               .replace(/[^a-z\s]/g, '')
-               .replace(/\s+/g, ' ')
-               .trim()
-    } catch (error) {
-      console.error('Error normalizing string:', str, error)
-      return ''
+      await onConfirm(proceedWithMismatches)
+    } finally {
+      setLoading(false)
     }
   }
 
-  const docNormalized = normalizeString(trimmedDocName)
-  const profileNormalized = normalizeString(trimmedProfileName)
-
-  if (!docNormalized || !profileNormalized) {
-    return { score: 0, reason: 'Failed to normalize names' }
+  // Add null check for validationResult
+  if (!validationResult) {
+    return null
   }
 
-  // Exact match
-  if (docNormalized === profileNormalized) {
-    return { score: 100, reason: 'Exact name match' }
+  // Safely extract data with fallbacks
+  const {
+    isValid = false,
+    confidence = 0,
+    matches = { primaryTaxpayer: false, spouse: false },
+    details = { documentNames: [], profileNames: [], reason: 'Unknown' }
+  } = validationResult
+
+  // Ensure arrays are always arrays
+  const documentNames = Array.isArray(details.documentNames) ? details.documentNames : []
+  const profileNames = Array.isArray(details.profileNames) ? details.profileNames : []
+
+  if (isValid) {
+    return (
+      <Dialog open={isOpen} onOpenChange={onClose}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center space-x-2">
+              <CheckCircle className="h-5 w-5 text-green-600" />
+              <span>Name Validation Successful</span>
+            </DialogTitle>
+            <DialogDescription>
+              The names in your {documentType} document match your profile information.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <Alert>
+            <CheckCircle className="h-4 w-4" />
+            <AlertDescription>
+              Document processing will continue automatically. The extracted data will be added to your tax return.
+            </AlertDescription>
+          </Alert>
+
+          <DialogFooter>
+            <Button 
+              onClick={() => handleConfirm(false)} 
+              disabled={loading}
+              className="w-full"
+            >
+              {loading ? "Processing..." : "Continue"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
   }
 
-  // Split into name parts
-  const docParts = docNormalized.split(' ').filter(part => part.length > 1)
-  const profileParts = profileNormalized.split(' ').filter(part => part.length > 1)
+  return (
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center space-x-2">
+            <AlertTriangle className="h-5 w-5 text-orange-600" />
+            <span>Name Validation Required</span>
+          </DialogTitle>
+          <DialogDescription>
+            We found some differences between the names in your {documentType} document and your profile information. Please review and decide how to proceed.
+          </DialogDescription>
+        </DialogHeader>
 
-  if (docParts.length === 0 || profileParts.length === 0) {
-    return { score: 0, reason: 'No valid name parts found' }
-  }
+        <div className="space-y-4">
+          {/* Confidence Score */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Validation Confidence</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">Match Confidence</span>
+                <Badge variant={confidence > 70 ? "default" : "destructive"}>
+                  {Math.round(confidence)}%
+                </Badge>
+              </div>
+              <div className="mt-2 text-sm text-gray-600">
+                {details.reason}
+              </div>
+            </CardContent>
+          </Card>
 
-  // Check for first and last name matches
-  const docFirst = docParts[0]
-  const docLast = docParts[docParts.length - 1]
-  const profileFirst = profileParts[0]
-  const profileLast = profileParts[profileParts.length - 1]
+          {/* Name Comparison */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center space-x-2">
+                <User className="h-4 w-4" />
+                <span>Name Comparison</span>
+              </CardTitle>
+              <CardDescription>
+                Compare names between your profile and document
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Document Names */}
+              <div>
+                <h4 className="font-medium text-sm text-gray-700 mb-2">
+                  Names Found in Document:
+                </h4>
+                <div className="space-y-1">
+                  {documentNames.length > 0 ? (
+                    documentNames.map((name, index) => (
+                      <div 
+                        key={`doc-${index}`} 
+                        className="bg-red-50 border border-red-200 p-2 rounded text-sm"
+                      >
+                        {name || 'Empty name'}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-gray-500 italic text-sm bg-gray-50 p-2 rounded">
+                      No names found in document
+                    </div>
+                  )}
+                </div>
+              </div>
 
-  let matchingParts = 0
-  let totalParts = Math.max(docParts.length, profileParts.length)
+              {/* Profile Names */}
+              <div>
+                <h4 className="font-medium text-sm text-gray-700 mb-2">
+                  Names in Your Profile:
+                </h4>
+                <div className="space-y-1">
+                  {profileNames.length > 0 ? (
+                    profileNames.map((name, index) => (
+                      <div 
+                        key={`profile-${index}`} 
+                        className="bg-blue-50 border border-blue-200 p-2 rounded text-sm"
+                      >
+                        {name || 'Empty name'}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-gray-500 italic text-sm bg-gray-50 p-2 rounded">
+                      No profile names set
+                    </div>
+                  )}
+                </div>
+              </div>
 
-  // First name match
-  if (docFirst === profileFirst) {
-    matchingParts++
-  }
+              {/* Match Status */}
+              <div className="bg-gray-50 p-3 rounded">
+                <div className="text-sm space-y-1">
+                  <div className="flex justify-between">
+                    <span>Primary Taxpayer Match:</span>
+                    <Badge variant={matches.primaryTaxpayer ? "default" : "destructive"} className="text-xs">
+                      {matches.primaryTaxpayer ? "✓ Match" : "✗ No Match"}
+                    </Badge>
+                  </div>
+                  {profileNames.length > 1 && (
+                    <div className="flex justify-between">
+                      <span>Spouse Match:</span>
+                      <Badge variant={matches.spouse ? "default" : "destructive"} className="text-xs">
+                        {matches.spouse ? "✓ Match" : "✗ No Match"}
+                      </Badge>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
-  // Last name match (if both have last names)
-  if (docParts.length > 1 && profileParts.length > 1 && docLast === profileLast) {
-    matchingParts++
-  }
+          {/* Suggestions */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center space-x-2">
+                <Info className="h-4 w-4" />
+                <span>Suggestions</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="space-y-2 text-sm text-gray-600">
+                <li className="flex items-start space-x-2">
+                  <span className="text-blue-500 mt-1">•</span>
+                  <span>Make sure the document belongs to you or your spouse</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-blue-500 mt-1">•</span>
+                  <span>Update your profile information if your name has changed</span>
+                </li>
+                <li className="flex items-start space-x-2">
+                  <span className="text-blue-500 mt-1">•</span>
+                  <span>Check for typos or different name formats (nicknames, middle names)</span>
+                </li>
+                {confidence < 30 && (
+                  <li className="flex items-start space-x-2">
+                    <span className="text-red-500 mt-1">•</span>
+                    <span className="text-red-600 font-medium">Consider uploading a different document if this doesn't belong to you</span>
+                  </li>
+                )}
+              </ul>
+            </CardContent>
+          </Card>
 
-  // Middle name matches
-  for (let i = 1; i < docParts.length - 1; i++) {
-    for (let j = 1; j < profileParts.length - 1; j++) {
-      if (docParts[i] === profileParts[j]) {
-        matchingParts += 0.5 // Middle names are worth less
-      }
-    }
-  }
+          {/* Warning for low confidence */}
+          {confidence < 50 && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertDescription>
+                <strong>Important:</strong> We found significant name differences (confidence: {confidence}%). 
+                Please ensure the document belongs to you or update your profile information before continuing.
+              </AlertDescription>
+            </Alert>
+          )}
+        </div>
 
-  // Calculate score based on matching parts
-  let score = Math.round((matchingParts / Math.min(docParts.length, profileParts.length)) * 100)
-
-  // Cap at 100
-  score = Math.min(score, 100)
-
-  let reason = `${matchingParts} of ${totalParts} name parts match`
-  
-  if (score >= 90) reason = 'Strong name match'
-  else if (score >= 70) reason = 'Good name match'
-  else if (score >= 50) reason = 'Partial name match'
-  else if (score >= 30) reason = 'Weak name match'
-  else reason = 'Names do not match'
-
-  return { score, reason }
+        <DialogFooter className="flex-col sm:flex-row gap-2">
+          <Button
+            variant="outline"
+            onClick={onClose}
+            disabled={loading}
+            className="w-full sm:w-auto"
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => handleConfirm(false)}
+            disabled={loading}
+            className="w-full sm:w-auto"
+          >
+            Update Profile First
+          </Button>
+          <Button
+            onClick={() => handleConfirm(true)}
+            disabled={loading}
+            className="w-full sm:w-auto"
+          >
+            {loading ? "Processing..." : "Continue Anyway"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }
