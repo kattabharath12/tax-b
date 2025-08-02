@@ -479,39 +479,111 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
         }
       }
       
-      // Strategy 3: Wages - Find the LARGEST reasonable amount in wages section
+      // Strategy 3: Wages - Find wages amount in context, not just largest number
       console.log('🔍 Strategy 3: Wage extraction')
       
-      // Find all monetary amounts
-      const amounts = ocrText.match(/\b\d{1,3}(?:,?\d{3})*\.?\d{0,2}\b/g) || []
-      const numericAmounts = amounts
-        .map(amt => parseFloat(amt.replace(/,/g, '')))
-        .filter(amt => !isNaN(amt) && amt >= 1000 && amt <= 10000000) // Reasonable wage range
-        .sort((a, b) => b - a) // Sort descending
-      
-      if (numericAmounts.length > 0) {
-        // The largest amount is likely wages
-        const wageAmount = numericAmounts[0]
-        console.log('✅ Found wages (largest amount):', wageAmount.toString())
-        extractedData.wages = wageAmount.toString()
+      // Pattern 1: Find amount after "Wages, tips, other compensation"
+      const wagePattern1 = /Wages,\s*tips,\s*other\s*compensation\s*[^0-9]*([0-9]+\.?[0-9]*)/i
+      const wageMatch1 = ocrText.match(wagePattern1)
+      if (wageMatch1 && wageMatch1[1]) {
+        const amount = parseFloat(wageMatch1[1].replace(/,/g, ''))
+        if (!isNaN(amount) && amount >= 1000 && amount <= 1000000) { // Reasonable wage range
+          console.log('✅ Found wages (context-based):', amount.toString())
+          extractedData.wages = amount.toString()
+        }
       }
       
-      // Strategy 4: Federal Tax - Find amounts smaller than wages in tax context
+      // Pattern 2: Find wages by position near "Wages, tips, other compensation"
+      if (!extractedData.wages) {
+        const wageLineIndex = lines.findIndex(line => /Wages.*tips.*compensation/i.test(line))
+        if (wageLineIndex !== -1) {
+          // Look in next 3 lines for reasonable wage amount
+          for (let i = wageLineIndex + 1; i <= wageLineIndex + 3 && i < lines.length; i++) {
+            const line = lines[i].trim()
+            if (/^[0-9]+\.?[0-9]*$/.test(line)) {
+              const amount = parseFloat(line.replace(/,/g, ''))
+              if (!isNaN(amount) && amount >= 1000 && amount <= 1000000) {
+                console.log('✅ Found wages (position-based):', amount.toString())
+                extractedData.wages = amount.toString()
+                break
+              }
+            }
+          }
+        }
+      }
+      
+      // Pattern 3: Fallback - find reasonable wage amounts, excluding control numbers
+      if (!extractedData.wages) {
+        const amounts = ocrText.match(/\b\d{1,3}(?:,?\d{3})*\.?\d{0,2}\b/g) || []
+        const numericAmounts = amounts
+          .map(amt => parseFloat(amt.replace(/,/g, '')))
+          .filter(amt => 
+            !isNaN(amt) && 
+            amt >= 1000 && 
+            amt <= 500000 && // Lower upper limit to exclude control numbers
+            amt.toString().length <= 8 && // Exclude very long numbers (like control numbers)
+            !amt.toString().match(/^[0-9]{7,}$/) // Exclude 7+ digit numbers without decimals
+          )
+          .sort((a, b) => b - a) // Sort descending
+        
+        if (numericAmounts.length > 0) {
+          const wageAmount = numericAmounts[0]
+          console.log('✅ Found wages (filtered largest):', wageAmount.toString())
+          extractedData.wages = wageAmount.toString()
+        }
+      }
+      
+      // Strategy 4: Federal Tax - Find tax amount in context
       console.log('🔍 Strategy 4: Federal tax extraction')
       
-      if (extractedData.wages) {
+      // Pattern 1: Find amount after "Federal income tax withheld"
+      const fedTaxPattern1 = /Federal\s*income\s*tax\s*withheld\s*[^0-9]*([0-9]+\.?[0-9]*)/i
+      const fedMatch1 = ocrText.match(fedTaxPattern1)
+      if (fedMatch1 && fedMatch1[1]) {
+        const amount = parseFloat(fedMatch1[1].replace(/,/g, ''))
+        if (!isNaN(amount) && amount >= 0 && amount <= 100000) { // Reasonable tax range
+          console.log('✅ Found federal tax (context-based):', amount.toString())
+          extractedData.federalTaxWithheld = amount.toString()
+        }
+      }
+      
+      // Pattern 2: Find federal tax by position
+      if (!extractedData.federalTaxWithheld) {
+        const fedTaxLineIndex = lines.findIndex(line => /Federal.*income.*tax.*withheld/i.test(line))
+        if (fedTaxLineIndex !== -1) {
+          // Look in next 3 lines for reasonable tax amount
+          for (let i = fedTaxLineIndex + 1; i <= fedTaxLineIndex + 3 && i < lines.length; i++) {
+            const line = lines[i].trim()
+            if (/^[0-9]+\.?[0-9]*$/.test(line)) {
+              const amount = parseFloat(line.replace(/,/g, ''))
+              if (!isNaN(amount) && amount >= 0 && amount <= 100000) {
+                console.log('✅ Found federal tax (position-based):', amount.toString())
+                extractedData.federalTaxWithheld = amount.toString()
+                break
+              }
+            }
+          }
+        }
+      }
+      
+      // Pattern 3: Find amounts smaller than wages but still substantial
+      if (!extractedData.federalTaxWithheld && extractedData.wages) {
         const wageValue = parseFloat(extractedData.wages)
+        const amounts = ocrText.match(/\b\d{1,3}(?:,?\d{3})*\.?\d{0,2}\b/g) || []
+        const taxCandidates = amounts
+          .map(amt => parseFloat(amt.replace(/,/g, '')))
+          .filter(amt => 
+            !isNaN(amt) && 
+            amt > 0 && 
+            amt < wageValue && 
+            amt >= 100 && 
+            amt <= wageValue * 0.5 &&
+            amt.toString().length <= 8
+          )
+          .sort((a, b) => b - a)
         
-        // Look for amounts that are smaller than wages but still substantial
-        const taxAmounts = numericAmounts.filter(amt => 
-          amt < wageValue && 
-          amt >= 100 && 
-          amt <= wageValue * 0.5 // Tax shouldn't be more than 50% of wages
-        )
-        
-        if (taxAmounts.length > 0) {
-          // Take the largest tax amount (most likely to be federal tax)
-          const federalTax = taxAmounts[0]
+        if (taxCandidates.length > 0) {
+          const federalTax = taxCandidates[0]
           console.log('✅ Found federal tax (wage-relative):', federalTax.toString())
           extractedData.federalTaxWithheld = federalTax.toString()
         }
@@ -537,36 +609,50 @@ async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxD
         extractedData.employeeSSN = ssnMatch[1]
       }
       
-      // Strategy 7: Additional fields - Social Security and Medicare wages
+      // Strategy 7: Additional fields - Find other W-2 amounts by context
       console.log('🔍 Strategy 7: Additional W-2 fields')
       
-      // For these, find amounts that are close to but not exactly the main wages
-      if (extractedData.wages && numericAmounts.length > 1) {
-        const wageValue = parseFloat(extractedData.wages)
-        
-        // Social Security wages (often same as or close to regular wages)
-        const ssWagesCandidates = numericAmounts.filter(amt => 
-          amt !== wageValue && 
-          amt >= wageValue * 0.8 && 
-          amt <= wageValue * 1.2
-        )
-        
-        if (ssWagesCandidates.length > 0) {
-          console.log('✅ Found Social Security wages:', ssWagesCandidates[0].toString())
-          extractedData.socialSecurityWages = ssWagesCandidates[0].toString()
+      // Social Security wages - find amount after "Social security wages"
+      const ssWagesPattern = /Social\s*security\s*wages\s*[^0-9]*([0-9]+\.?[0-9]*)/i
+      const ssWagesMatch = ocrText.match(ssWagesPattern)
+      if (ssWagesMatch && ssWagesMatch[1]) {
+        const amount = parseFloat(ssWagesMatch[1].replace(/,/g, ''))
+        if (!isNaN(amount) && amount > 0 && amount <= 1000000) {
+          console.log('✅ Found Social Security wages (context):', amount.toString())
+          extractedData.socialSecurityWages = amount.toString()
         }
-        
-        // Medicare wages (often same as or close to regular wages)
-        const medicareWagesCandidates = numericAmounts.filter(amt => 
-          amt !== wageValue && 
-          amt !== parseFloat(extractedData.socialSecurityWages || '0') &&
-          amt >= wageValue * 0.8 && 
-          amt <= wageValue * 1.2
-        )
-        
-        if (medicareWagesCandidates.length > 0) {
-          console.log('✅ Found Medicare wages:', medicareWagesCandidates[0].toString())
-          extractedData.medicareWages = medicareWagesCandidates[0].toString()
+      }
+      
+      // Medicare wages - find amount after "Medicare wages and tips"
+      const medicareWagesPattern = /Medicare\s*wages\s*and\s*tips\s*[^0-9]*([0-9]+\.?[0-9]*)/i
+      const medicareWagesMatch = ocrText.match(medicareWagesPattern)
+      if (medicareWagesMatch && medicareWagesMatch[1]) {
+        const amount = parseFloat(medicareWagesMatch[1].replace(/,/g, ''))
+        if (!isNaN(amount) && amount > 0 && amount <= 1000000) {
+          console.log('✅ Found Medicare wages (context):', amount.toString())
+          extractedData.medicareWages = amount.toString()
+        }
+      }
+      
+      // Social Security tax withheld
+      const ssTaxPattern = /Social\s*security\s*tax\s*withheld\s*[^0-9]*([0-9]+\.?[0-9]*)/i
+      const ssTaxMatch = ocrText.match(ssTaxPattern)
+      if (ssTaxMatch && ssTaxMatch[1]) {
+        const amount = parseFloat(ssTaxMatch[1].replace(/,/g, ''))
+        if (!isNaN(amount) && amount > 0 && amount <= 100000) {
+          console.log('✅ Found Social Security tax:', amount.toString())
+          extractedData.socialSecurityTaxWithheld = amount.toString()
+        }
+      }
+      
+      // Medicare tax withheld
+      const medicareTaxPattern = /Medicare\s*tax\s*withheld\s*[^0-9]*([0-9]+\.?[0-9]*)/i
+      const medicareTaxMatch = ocrText.match(medicareTaxPattern)
+      if (medicareTaxMatch && medicareTaxMatch[1]) {
+        const amount = parseFloat(medicareTaxMatch[1].replace(/,/g, ''))
+        if (!isNaN(amount) && amount > 0 && amount <= 100000) {
+          console.log('✅ Found Medicare tax:', amount.toString())
+          extractedData.medicareTaxWithheld = amount.toString()
         }
       }
       
