@@ -243,11 +243,135 @@ async function setupGoogleCredentials() {
   }
 }
 
-// If no entities found, try to extract data from OCR text using regex
+// ✅ COMPLETE Google Document AI processing function
+async function processWithGoogleDocumentAI(document: any): Promise<ExtractedTaxData> {
+  console.log("processWithGoogleDocumentAI: Starting...")
+  
+  try {
+    // Dynamic import to avoid issues if library is not installed
+    const { DocumentProcessorServiceClient } = await import('@google-cloud/documentai')
+    
+    // Initialize the client with explicit configuration
+    const client = new DocumentProcessorServiceClient({
+      projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
+      keyFilename: process.env.GOOGLE_APPLICATION_CREDENTIALS,
+      // Add explicit API endpoint for US region
+      apiEndpoint: 'us-documentai.googleapis.com',
+    })
+    
+    console.log("processWithGoogleDocumentAI: Client initialized with explicit config")
+    
+    // Read the document file
+    const { readFile } = await import("fs/promises")
+    
+    // Check if file exists first
+    const { existsSync } = await import("fs")
+    if (!existsSync(document.filePath)) {
+      throw new Error(`File not found: ${document.filePath}`)
+    }
+    
+    const imageFile = await readFile(document.filePath)
+    console.log("processWithGoogleDocumentAI: File read successfully, size:", imageFile.length)
+    
+    // Use the Form Parser processor we have
+    const processorId = process.env.GOOGLE_CLOUD_W2_PROCESSOR_ID
+    const name = `projects/${process.env.GOOGLE_CLOUD_PROJECT_ID}/locations/us/processors/${processorId}`
+    
+    console.log("processWithGoogleDocumentAI: Using processor:", name)
+    
+    // Configure the request with proper MIME type detection
+    let mimeType = document.fileType || 'application/pdf'
+    if (document.filePath?.toLowerCase().endsWith('.png')) {
+      mimeType = 'image/png'
+    } else if (document.filePath?.toLowerCase().endsWith('.jpg') || document.filePath?.toLowerCase().endsWith('.jpeg')) {
+      mimeType = 'image/jpeg'
+    }
+    
+    const request = {
+      name,
+      rawDocument: {
+        content: imageFile,
+        mimeType: mimeType,
+      },
+    }
+
+    console.log("processWithGoogleDocumentAI: Sending request to Google with MIME type:", mimeType)
+    
+    // Process the document with timeout
+    const [result] = await Promise.race([
+      client.processDocument(request),
+      new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Google Document AI timeout')), 30000)
+      )
+    ]) as any
+    
+    const { document: docResult } = result
+    
+    console.log("processWithGoogleDocumentAI: Processing complete")
+    
+    // Extract text and entities
+    const ocrText = docResult?.text || ''
+    const entities = docResult?.entities || []
+    
+    console.log("processWithGoogleDocumentAI: Extracted text length:", ocrText.length)
+    console.log("processWithGoogleDocumentAI: Found entities:", entities.length)
+    
+    // ✅ Initialize extractedData here
+    const extractedData: any = {}
+    
+    // Process entities from Google Document AI
+    entities.forEach((entity: any, index: number) => {
+      console.log(`Entity ${index}:`, {
+        type: entity.type,
+        mentionText: entity.mentionText,
+        confidence: entity.confidence,
+        normalizedValue: entity.normalizedValue
+      })
+      
+      if (entity.type && entity.mentionText) {
+        // Map Google Document AI entity types to our field names
+        const fieldMapping: Record<string, string> = {
+          // W-2 specific mappings
+          'employee_name': 'employeeName',
+          'employee_address': 'employeeAddress', 
+          'employee_ssn': 'employeeSSN',
+          'employer_name': 'employerName',
+          'employer_address': 'employerAddress',
+          'employer_ein': 'employerEIN',
+          'wages_tips_other_compensation': 'wages',
+          'federal_income_tax_withheld': 'federalTaxWithheld',
+          'social_security_wages': 'socialSecurityWages',
+          'social_security_tax_withheld': 'socialSecurityTaxWithheld',
+          'medicare_wages_and_tips': 'medicareWages',
+          'medicare_tax_withheld': 'medicareTaxWithheld',
+          'state_wages_tips_etc': 'stateWages',
+          'state_income_tax': 'stateTaxWithheld',
+          
+          // Generic mappings
+          'amount': 'amount',
+          'date': 'date',
+          'total': 'total'
+        }
+        
+        const fieldName = fieldMapping[entity.type.toLowerCase()] || entity.type
+        
+        // Use normalized value if available, otherwise use mention text
+        let value = entity.normalizedValue?.text || entity.mentionText
+        
+        // Clean up monetary values
+        if (value && (fieldName.includes('wages') || fieldName.includes('Tax') || fieldName.includes('amount'))) {
+          value = value.replace(/[,$]/g, '')
+        }
+        
+        extractedData[fieldName] = value
+      }
+    })
+    
+    // If no entities found, try to extract data from OCR text using regex
     if (Object.keys(extractedData).length === 0 && ocrText) {
       console.log("processWithGoogleDocumentAI: No entities found, trying regex extraction from OCR text")
       
-      // ===== ADD DEBUGGING =====
+      // ===== DEBUGGING SECTION =====
       console.log('=== DEBUGGING EXTRACTED TEXT ===')
       console.log('📄 OCR Text Sample (first 2000 chars):')
       console.log(JSON.stringify(ocrText.substring(0, 2000)))
@@ -317,7 +441,6 @@ async function setupGoogleCredentials() {
       const wagePatterns = [
         /1\s+Wages.*?([0-9,]+\.?[0-9]*)/i,
         /wages.*?([0-9,]+\.?[0-9]*)/gi,
-        /161130\.48/, // Specific amount from your logs
         /\$([0-9,]+\.?[0-9]*)/g
       ]
       
@@ -336,8 +459,7 @@ async function setupGoogleCredentials() {
       // Look for federal tax withheld
       const fedTaxPatterns = [
         /2\s+Federal.*?([0-9,]+\.?[0-9]*)/i,
-        /federal.*?tax.*?([0-9,]+\.?[0-9]*)/gi,
-        /21559\.98/ // Specific amount from your logs
+        /federal.*?tax.*?([0-9,]+\.?[0-9]*)/gi
       ]
       
       for (const pattern of fedTaxPatterns) {
@@ -397,6 +519,24 @@ async function setupGoogleCredentials() {
       const nameMatches = [...ocrText.matchAll(/([A-Z][A-Z\s]{10,40})/g)]
       console.log('Name patterns found:', nameMatches.map(m => m[1]?.trim()).filter(Boolean))
     }
+    
+    console.log("processWithGoogleDocumentAI: Final extracted data:", extractedData)
+    
+    return {
+      documentType: document.documentType,
+      ocrText,
+      extractedData,
+      confidence: docResult?.entities?.[0]?.confidence || 0.9,
+      processingMethod: 'google_document_ai'
+    }
+    
+  } catch (error) {
+    console.error("processWithGoogleDocumentAI: Error:", error.message)
+    console.error("processWithGoogleDocumentAI: Error stack:", error.stack?.substring(0, 500))
+    throw new Error(`Google Document AI processing failed: ${error.message}`)
+  }
+}
+
 // Abacus AI processing with multiple endpoint/auth attempts
 async function processWithAbacusAI(document: any): Promise<ExtractedTaxData> {
   console.log("processWithAbacusAI: Starting...")
