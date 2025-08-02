@@ -1,238 +1,196 @@
-
-// Name validation utility for comparing user profile names with document names
+// Create/Replace: lib/name-validation.ts
 
 export interface NameValidationResult {
   isValid: boolean
   confidence: number
-  mismatches: NameMismatch[]
-  suggestions: string[]
-}
-
-export interface NameMismatch {
-  field: string
-  profileName: string
-  documentName: string
-  severity: 'low' | 'medium' | 'high'
-}
-
-export interface ExtractedNames {
-  employeeName?: string
-  recipientName?: string
-  spouseName?: string
-  [key: string]: string | undefined
-}
-
-export interface ProfileNames {  
-  firstName: string
-  lastName: string
-  spouseFirstName?: string
-  spouseLastName?: string
-}
-
-/**
- * Validates names extracted from documents against user profile names
- */
-export function validateNames(
-  profileNames: ProfileNames,
-  extractedNames: ExtractedNames
-): NameValidationResult {
-  const mismatches: NameMismatch[] = []
-  const suggestions: string[] = []
-  
-  // Normalize names for comparison
-  const normalizeString = (str: string): string => {
-    return str?.toLowerCase().replace(/[^a-z\s]/g, '').trim() || ''
+  matches: {
+    primaryTaxpayer: boolean
+    spouse: boolean
   }
-
-  // Split full names into parts
-  const splitName = (fullName: string): { first: string; last: string } => {
-    const parts = fullName.trim().split(/\s+/)
-    if (parts.length === 1) {
-      return { first: parts[0], last: '' }
-    }
-    return {
-      first: parts[0],
-      last: parts.slice(-1)[0] // Take last part as last name
-    }
-  }
-
-  // Calculate similarity between two strings using Levenshtein distance
-  const calculateSimilarity = (str1: string, str2: string): number => {
-    if (!str1 || !str2) return 0
-    
-    const s1 = normalizeString(str1)
-    const s2 = normalizeString(str2)
-    
-    if (s1 === s2) return 1.0
-    
-    // Handle common variations
-    const commonVariations: Record<string, string[]> = {
-      'robert': ['bob', 'rob', 'bobby'],
-      'william': ['bill', 'will', 'billy'],
-      'richard': ['rick', 'dick', 'rich'],
-      'michael': ['mike', 'mick'],
-      'elizabeth': ['liz', 'beth', 'betty'],
-      'katherine': ['kate', 'kathy', 'katie'],
-      'jennifer': ['jen', 'jenny'],
-      'christopher': ['chris'],
-      'matthew': ['matt'],
-      'benjamin': ['ben'],
-      'joseph': ['joe', 'joey'],
-      'daniel': ['dan', 'danny'],
-      'anthony': ['tony'],
-      'patricia': ['pat', 'patty'],
-      'susan': ['sue', 'susie'],
-      'margaret': ['maggie', 'meg', 'peggy']
-    }
-
-    // Check for nickname matches
-    for (const [fullName, nicknames] of Object.entries(commonVariations)) {
-      if ((s1 === fullName && nicknames.includes(s2)) || 
-          (s2 === fullName && nicknames.includes(s1)) ||
-          (nicknames.includes(s1) && nicknames.includes(s2))) {
-        return 0.9
-      }
-    }
-
-    // Levenshtein distance calculation
-    const matrix: number[][] = []
-    for (let i = 0; i <= s2.length; i++) {
-      matrix[i] = [i]
-    }
-    for (let j = 0; j <= s1.length; j++) {
-      matrix[0][j] = j
-    }
-    
-    for (let i = 1; i <= s2.length; i++) {
-      for (let j = 1; j <= s1.length; j++) {
-        if (s2.charAt(i - 1) === s1.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1]
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1, // substitution
-            matrix[i][j - 1] + 1,     // insertion
-            matrix[i - 1][j] + 1      // deletion
-          )
-        }
-      }
-    }
-    
-    const maxLength = Math.max(s1.length, s2.length)
-    return maxLength > 0 ? 1 - (matrix[s2.length][s1.length] / maxLength) : 0
-  }
-
-  // Validate primary taxpayer name
-  if (extractedNames.employeeName || extractedNames.recipientName) {
-    const documentName = extractedNames.employeeName || extractedNames.recipientName || ''
-    const { first: docFirst, last: docLast } = splitName(documentName)
-    
-    const profileFullName = `${profileNames.firstName} ${profileNames.lastName}`.trim()
-    const profileFirst = normalizeString(profileNames.firstName)
-    const profileLast = normalizeString(profileNames.lastName)
-    
-    const firstNameSimilarity = calculateSimilarity(profileFirst, docFirst)
-    const lastNameSimilarity = calculateSimilarity(profileLast, docLast)
-    const fullNameSimilarity = calculateSimilarity(profileFullName, documentName)
-    
-    // Check for mismatches
-    if (firstNameSimilarity < 0.8) {
-      mismatches.push({
-        field: 'firstName',
-        profileName: profileNames.firstName,
-        documentName: docFirst,
-        severity: firstNameSimilarity < 0.5 ? 'high' : firstNameSimilarity < 0.7 ? 'medium' : 'low'
-      })
-      
-      if (firstNameSimilarity > 0.5) {
-        suggestions.push(`Did you mean "${docFirst}" instead of "${profileNames.firstName}"?`)
-      }
-    }
-    
-    if (lastNameSimilarity < 0.8) {
-      mismatches.push({
-        field: 'lastName',
-        profileName: profileNames.lastName,
-        documentName: docLast,
-        severity: lastNameSimilarity < 0.5 ? 'high' : lastNameSimilarity < 0.7 ? 'medium' : 'low'
-      })
-      
-      if (lastNameSimilarity > 0.5) {
-        suggestions.push(`Did you mean "${docLast}" instead of "${profileNames.lastName}"?`)
-      }
-    }
-  }
-
-  // Validate spouse name if applicable
-  if ((profileNames.spouseFirstName || profileNames.spouseLastName) && extractedNames.spouseName) {
-    const { first: docSpouseFirst, last: docSpouseLast } = splitName(extractedNames.spouseName)
-    
-    const spouseFirstSimilarity = calculateSimilarity(
-      profileNames.spouseFirstName || '', 
-      docSpouseFirst
-    )
-    const spouseLastSimilarity = calculateSimilarity(
-      profileNames.spouseLastName || '', 
-      docSpouseLast
-    )
-    
-    if (spouseFirstSimilarity < 0.8) {
-      mismatches.push({
-        field: 'spouseFirstName',
-        profileName: profileNames.spouseFirstName || '',
-        documentName: docSpouseFirst,
-        severity: spouseFirstSimilarity < 0.5 ? 'high' : spouseFirstSimilarity < 0.7 ? 'medium' : 'low'
-      })
-    }
-    
-    if (spouseLastSimilarity < 0.8) {
-      mismatches.push({
-        field: 'spouseLastName', 
-        profileName: profileNames.spouseLastName || '',
-        documentName: docSpouseLast,
-        severity: spouseLastSimilarity < 0.5 ? 'high' : spouseLastSimilarity < 0.7 ? 'medium' : 'low'
-      })
-    }
-  }
-
-  // Overall validation result
-  const highSeverityCount = mismatches.filter(m => m.severity === 'high').length
-  const mediumSeverityCount = mismatches.filter(m => m.severity === 'medium').length
-  
-  let confidence = 1.0
-  if (highSeverityCount > 0) {
-    confidence = Math.max(0.1, 1.0 - (highSeverityCount * 0.4) - (mediumSeverityCount * 0.2))
-  } else if (mediumSeverityCount > 0) {
-    confidence = Math.max(0.6, 1.0 - (mediumSeverityCount * 0.2))
-  } else if (mismatches.length > 0) {
-    confidence = Math.max(0.8, 1.0 - (mismatches.length * 0.1))
-  }
-
-  return {
-    isValid: mismatches.length === 0 || mismatches.every(m => m.severity === 'low'),
-    confidence,
-    mismatches,
-    suggestions
+  details: {
+    documentNames: string[]
+    profileNames: string[]
+    reason: string
   }
 }
 
-/**
- * Extract names from document data for validation
- */
-export function extractNamesFromDocument(extractedData: any): ExtractedNames {
-  const names: ExtractedNames = {}
+export function extractNamesFromDocument(extractedData: any): string[] {
+  const names: string[] = []
   
   if (extractedData?.employeeName) {
-    names.employeeName = extractedData.employeeName
+    names.push(extractedData.employeeName)
   }
   
   if (extractedData?.recipientName) {
-    names.recipientName = extractedData.recipientName
+    names.push(extractedData.recipientName)
   }
   
-  // For joint tax returns, try to extract spouse name from various fields
-  if (extractedData?.spouseName) {
-    names.spouseName = extractedData.spouseName
+  if (extractedData?.employerName && !extractedData?.employeeName) {
+    // Only include employer name if no employee name found
+    names.push(extractedData.employerName)
   }
   
-  return names
+  return names.filter(name => name && name.trim().length > 0)
+}
+
+export function validateNames(
+  profileNames: {
+    firstName?: string
+    lastName?: string
+    spouseFirstName?: string
+    spouseLastName?: string
+  },
+  documentNames: string[]
+): NameValidationResult {
+  
+  // If no names to compare, validation fails
+  if (!documentNames.length) {
+    return {
+      isValid: false,
+      confidence: 0,
+      matches: { primaryTaxpayer: false, spouse: false },
+      details: {
+        documentNames,
+        profileNames: [
+          `${profileNames.firstName || ''} ${profileNames.lastName || ''}`.trim(),
+          `${profileNames.spouseFirstName || ''} ${profileNames.spouseLastName || ''}`.trim()
+        ].filter(name => name.length > 0),
+        reason: 'No names found in document'
+      }
+    }
+  }
+
+  // Build profile names list
+  const profileNamesList: string[] = []
+  
+  if (profileNames.firstName || profileNames.lastName) {
+    profileNamesList.push(`${profileNames.firstName || ''} ${profileNames.lastName || ''}`.trim())
+  }
+  
+  if (profileNames.spouseFirstName || profileNames.spouseLastName) {
+    profileNamesList.push(`${profileNames.spouseFirstName || ''} ${profileNames.spouseLastName || ''}`.trim())
+  }
+
+  // If no profile names, validation fails
+  if (!profileNamesList.length || profileNamesList.every(name => !name.trim())) {
+    return {
+      isValid: false,
+      confidence: 0,
+      matches: { primaryTaxpayer: false, spouse: false },
+      details: {
+        documentNames,
+        profileNames: profileNamesList,
+        reason: 'No names in tax return profile'
+      }
+    }
+  }
+
+  // Check each document name against profile names
+  let bestMatch = { score: 0, primaryMatch: false, spouseMatch: false, reason: '' }
+
+  for (const docName of documentNames) {
+    for (let i = 0; i < profileNamesList.length; i++) {
+      const profileName = profileNamesList[i]
+      const matchResult = compareNames(docName, profileName)
+      
+      if (matchResult.score > bestMatch.score) {
+        bestMatch = {
+          score: matchResult.score,
+          primaryMatch: i === 0, // First name in list is primary taxpayer
+          spouseMatch: i === 1,  // Second name in list is spouse
+          reason: matchResult.reason
+        }
+      }
+    }
+  }
+
+  // Determine if validation passes (require at least 70% confidence)
+  const isValid = bestMatch.score >= 70
+
+  return {
+    isValid,
+    confidence: bestMatch.score,
+    matches: {
+      primaryTaxpayer: bestMatch.primaryMatch,
+      spouse: bestMatch.spouseMatch
+    },
+    details: {
+      documentNames,
+      profileNames: profileNamesList,
+      reason: bestMatch.reason
+    }
+  }
+}
+
+function compareNames(docName: string, profileName: string): { score: number; reason: string } {
+  if (!docName?.trim() || !profileName?.trim()) {
+    return { score: 0, reason: 'Empty name comparison' }
+  }
+
+  // Normalize names (lowercase, remove special chars, extra spaces)
+  const normalizeString = (str: string) => 
+    str.toLowerCase()
+       .replace(/[^a-z\s]/g, '')
+       .replace(/\s+/g, ' ')
+       .trim()
+
+  const docNormalized = normalizeString(docName)
+  const profileNormalized = normalizeString(profileName)
+
+  // Exact match
+  if (docNormalized === profileNormalized) {
+    return { score: 100, reason: 'Exact name match' }
+  }
+
+  // Split into name parts
+  const docParts = docNormalized.split(' ').filter(part => part.length > 1)
+  const profileParts = profileNormalized.split(' ').filter(part => part.length > 1)
+
+  if (docParts.length === 0 || profileParts.length === 0) {
+    return { score: 0, reason: 'No valid name parts found' }
+  }
+
+  // Check for first and last name matches
+  const docFirst = docParts[0]
+  const docLast = docParts[docParts.length - 1]
+  const profileFirst = profileParts[0]
+  const profileLast = profileParts[profileParts.length - 1]
+
+  let matchingParts = 0
+  let totalParts = Math.max(docParts.length, profileParts.length)
+
+  // First name match
+  if (docFirst === profileFirst) {
+    matchingParts++
+  }
+
+  // Last name match (if both have last names)
+  if (docParts.length > 1 && profileParts.length > 1 && docLast === profileLast) {
+    matchingParts++
+  }
+
+  // Middle name matches
+  for (let i = 1; i < docParts.length - 1; i++) {
+    for (let j = 1; j < profileParts.length - 1; j++) {
+      if (docParts[i] === profileParts[j]) {
+        matchingParts += 0.5 // Middle names are worth less
+      }
+    }
+  }
+
+  // Calculate score based on matching parts
+  let score = Math.round((matchingParts / Math.min(docParts.length, profileParts.length)) * 100)
+
+  // Cap at 100
+  score = Math.min(score, 100)
+
+  let reason = `${matchingParts} of ${totalParts} name parts match`
+  
+  if (score >= 90) reason = 'Strong name match'
+  else if (score >= 70) reason = 'Good name match'
+  else if (score >= 50) reason = 'Partial name match'
+  else if (score >= 30) reason = 'Weak name match'
+  else reason = 'Names do not match'
+
+  return { score, reason }
 }
